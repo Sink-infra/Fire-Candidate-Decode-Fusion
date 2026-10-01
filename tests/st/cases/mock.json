@@ -1,0 +1,150 @@
+{
+  "category": "mock",
+  "description": "Twelve fixed shape/type mappings with deterministic synthetic inputs.",
+  "cases": [
+    {
+      "name": "mock_01",
+      "expectation": "success",
+      "raw_pred_shape": [
+        1,
+        32,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_02",
+      "expectation": "success",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_03",
+      "expectation": "success",
+      "raw_pred_shape": [
+        4,
+        4096,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_04",
+      "expectation": "success",
+      "raw_pred_shape": [
+        4,
+        4097,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_05",
+      "expectation": "success",
+      "raw_pred_shape": [
+        8,
+        32768,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_06",
+      "expectation": "success",
+      "raw_pred_shape": [
+        8,
+        32769,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_07",
+      "expectation": "success",
+      "raw_pred_shape": [
+        1,
+        32,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_08",
+      "expectation": "success",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_09",
+      "expectation": "success",
+      "raw_pred_shape": [
+        4,
+        4096,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_10",
+      "expectation": "success",
+      "raw_pred_shape": [
+        4,
+        4097,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_11",
+      "expectation": "success",
+      "raw_pred_shape": [
+        8,
+        32768,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    },
+    {
+      "name": "mock_12",
+      "expectation": "success",
+      "raw_pred_shape": [
+        8,
+        32769,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 140,
+      "note": "Official shape reconstruction; synthetic values, not official input bytes."
+    }
+  ]
+}
