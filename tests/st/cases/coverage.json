@@ -1,0 +1,771 @@
+{
+  "category": "coverage",
+  "description": "Input types, shapes, layouts, values, and contract boundaries.",
+  "cases": [
+    {
+      "name": "coverage_fp32_minimum",
+      "expectation": "success",
+      "raw_pred_shape": [
+        1,
+        1,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "covers": [
+        "B_min",
+        "N_min",
+        "float32"
+      ]
+    },
+    {
+      "name": "coverage_fp16_minimum",
+      "expectation": "success",
+      "raw_pred_shape": [
+        1,
+        1,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 104,
+      "covers": [
+        "B_min",
+        "N_min",
+        "float16"
+      ]
+    },
+    {
+      "name": "coverage_fp32_n31",
+      "expectation": "success",
+      "raw_pred_shape": [
+        2,
+        31,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "covers": [
+        "tail_before_32"
+      ]
+    },
+    {
+      "name": "coverage_fp16_n31",
+      "expectation": "success",
+      "raw_pred_shape": [
+        2,
+        31,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 104,
+      "covers": [
+        "tail_before_32"
+      ]
+    },
+    {
+      "name": "coverage_fp32_n32",
+      "expectation": "success",
+      "raw_pred_shape": [
+        2,
+        32,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "covers": [
+        "aligned_32"
+      ]
+    },
+    {
+      "name": "coverage_fp16_n32",
+      "expectation": "success",
+      "raw_pred_shape": [
+        2,
+        32,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 104,
+      "covers": [
+        "aligned_32"
+      ]
+    },
+    {
+      "name": "coverage_fp32_n33",
+      "expectation": "success",
+      "raw_pred_shape": [
+        3,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "input_pattern": "indexed",
+      "seed": 104,
+      "covers": [
+        "tail_after_32",
+        "batch_boundary"
+      ]
+    },
+    {
+      "name": "coverage_fp16_n33",
+      "expectation": "success",
+      "raw_pred_shape": [
+        3,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "input_pattern": "indexed",
+      "seed": 104,
+      "covers": [
+        "tail_after_32",
+        "batch_boundary"
+      ]
+    },
+    {
+      "name": "coverage_fp32_n63",
+      "expectation": "success",
+      "raw_pred_shape": [
+        4,
+        63,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "covers": [
+        "tail_before_64"
+      ]
+    },
+    {
+      "name": "coverage_fp16_n63",
+      "expectation": "success",
+      "raw_pred_shape": [
+        4,
+        63,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 104,
+      "covers": [
+        "tail_before_64"
+      ]
+    },
+    {
+      "name": "coverage_fp32_n64",
+      "expectation": "success",
+      "raw_pred_shape": [
+        4,
+        64,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "covers": [
+        "aligned_64"
+      ]
+    },
+    {
+      "name": "coverage_fp16_n64",
+      "expectation": "success",
+      "raw_pred_shape": [
+        4,
+        64,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 104,
+      "covers": [
+        "aligned_64"
+      ]
+    },
+    {
+      "name": "coverage_fp32_n65",
+      "expectation": "success",
+      "raw_pred_shape": [
+        5,
+        65,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "covers": [
+        "tail_after_64"
+      ]
+    },
+    {
+      "name": "coverage_fp16_n65",
+      "expectation": "success",
+      "raw_pred_shape": [
+        5,
+        65,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 104,
+      "covers": [
+        "tail_after_64"
+      ]
+    },
+    {
+      "name": "coverage_fp32_n127",
+      "expectation": "success",
+      "raw_pred_shape": [
+        6,
+        127,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "covers": [
+        "odd_N",
+        "B6"
+      ]
+    },
+    {
+      "name": "coverage_fp16_n129",
+      "expectation": "success",
+      "raw_pred_shape": [
+        7,
+        129,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 104,
+      "covers": [
+        "odd_N",
+        "B7"
+      ]
+    },
+    {
+      "name": "coverage_fp16_n4096",
+      "expectation": "success",
+      "raw_pred_shape": [
+        1,
+        4096,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 104,
+      "covers": [
+        "large_N"
+      ]
+    },
+    {
+      "name": "coverage_fp32_n16384",
+      "expectation": "success",
+      "raw_pred_shape": [
+        4,
+        16384,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "covers": [
+        "large_N"
+      ]
+    },
+    {
+      "name": "coverage_fp32_maximum",
+      "expectation": "success",
+      "raw_pred_shape": [
+        8,
+        32768,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "covers": [
+        "B_max",
+        "N_max"
+      ]
+    },
+    {
+      "name": "coverage_fp16_maximum",
+      "expectation": "success",
+      "raw_pred_shape": [
+        8,
+        32768,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "seed": 104,
+      "covers": [
+        "B_max",
+        "N_max"
+      ]
+    },
+    {
+      "name": "coverage_fp16_large_tail",
+      "expectation": "success",
+      "raw_pred_shape": [
+        3,
+        32767,
+        6
+      ],
+      "raw_pred_dtype": "float16",
+      "input_pattern": "indexed",
+      "seed": 104,
+      "covers": [
+        "large_tail",
+        "shared_priors"
+      ]
+    },
+    {
+      "name": "coverage_fp32_fractional_priors",
+      "expectation": "success",
+      "raw_pred_shape": [
+        1,
+        7,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "fractional",
+      "seed": 104,
+      "covers": [
+        "positive_fractional_stride",
+        "small_anchors",
+        "nonnegative_fractional_grid"
+      ]
+    },
+    {
+      "name": "coverage_reject_raw_rank2",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "priors_shape": [
+        33,
+        5
+      ],
+      "expected_error": "RAW_PRED_RANK"
+    },
+    {
+      "name": "coverage_reject_raw_rank4",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        1,
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "priors_shape": [
+        33,
+        5
+      ],
+      "expected_error": "RAW_PRED_RANK"
+    },
+    {
+      "name": "coverage_reject_priors_rank1",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "priors_shape": [
+        165
+      ],
+      "expected_error": "PRIORS_RANK"
+    },
+    {
+      "name": "coverage_reject_priors_rank3",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "priors_shape": [
+        1,
+        33,
+        5
+      ],
+      "expected_error": "PRIORS_RANK"
+    },
+    {
+      "name": "coverage_reject_raw_width",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        5
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "expected_error": "RAW_PRED_WIDTH"
+    },
+    {
+      "name": "coverage_reject_priors_width",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "priors_shape": [
+        33,
+        6
+      ],
+      "expected_error": "PRIORS_WIDTH"
+    },
+    {
+      "name": "coverage_reject_b_zero",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        0,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "expected_error": "B_RANGE"
+    },
+    {
+      "name": "coverage_reject_b_above_max",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        9,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "expected_error": "B_RANGE"
+    },
+    {
+      "name": "coverage_reject_n_zero",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        0,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "expected_error": "N_RANGE"
+    },
+    {
+      "name": "coverage_reject_n_above_max",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        1,
+        32769,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "expected_error": "N_RANGE"
+    },
+    {
+      "name": "coverage_reject_n_mismatch",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "priors_shape": [
+        32,
+        5
+      ],
+      "expected_error": "N_MISMATCH"
+    },
+    {
+      "name": "coverage_reject_raw_int32",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "int32",
+      "seed": 104,
+      "expected_error": "RAW_PRED_DTYPE"
+    },
+    {
+      "name": "coverage_reject_raw_float64",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float64",
+      "seed": 104,
+      "expected_error": "RAW_PRED_DTYPE"
+    },
+    {
+      "name": "coverage_reject_priors_float16",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "priors_dtype": "float16",
+      "expected_error": "PRIORS_DTYPE"
+    },
+    {
+      "name": "coverage_reject_priors_float64",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "priors_dtype": "float64",
+      "expected_error": "PRIORS_DTYPE"
+    },
+    {
+      "name": "coverage_reject_raw_format",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "raw_pred_format": "NCHW",
+      "expected_error": "RAW_PRED_FORMAT"
+    },
+    {
+      "name": "coverage_reject_priors_format",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "priors_format": "NCHW",
+      "expected_error": "PRIORS_FORMAT"
+    },
+    {
+      "name": "coverage_reject_raw_noncontiguous",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "raw_pred_contiguous": false,
+      "expected_error": "RAW_PRED_CONTIGUOUS"
+    },
+    {
+      "name": "coverage_reject_priors_noncontiguous",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "seed": 104,
+      "priors_contiguous": false,
+      "expected_error": "PRIORS_CONTIGUOUS"
+    },
+    {
+      "name": "coverage_reject_raw_nan",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "input_pattern": "nan_one",
+      "seed": 104,
+      "expected_error": "RAW_PRED_NONFINITE"
+    },
+    {
+      "name": "coverage_reject_raw_posinf",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "input_pattern": "posinf_one",
+      "seed": 104,
+      "expected_error": "RAW_PRED_NONFINITE"
+    },
+    {
+      "name": "coverage_reject_raw_neginf",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "input_pattern": "neginf_one",
+      "seed": 104,
+      "expected_error": "RAW_PRED_NONFINITE"
+    },
+    {
+      "name": "coverage_reject_priors_nan",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "nan_one",
+      "seed": 104,
+      "expected_error": "PRIORS_NONFINITE"
+    },
+    {
+      "name": "coverage_reject_priors_posinf",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "posinf_one",
+      "seed": 104,
+      "expected_error": "PRIORS_NONFINITE"
+    },
+    {
+      "name": "coverage_reject_priors_neginf",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "neginf_one",
+      "seed": 104,
+      "expected_error": "PRIORS_NONFINITE"
+    },
+    {
+      "name": "coverage_reject_stride_zero",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "stride_zero",
+      "seed": 104,
+      "expected_error": "STRIDE_NONPOSITIVE"
+    },
+    {
+      "name": "coverage_reject_stride_negative",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "stride_negative",
+      "seed": 104,
+      "expected_error": "STRIDE_NONPOSITIVE"
+    },
+    {
+      "name": "coverage_reject_anchor_w_zero",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "anchor_w_zero",
+      "seed": 104,
+      "expected_error": "ANCHOR_W_NONPOSITIVE"
+    },
+    {
+      "name": "coverage_reject_anchor_w_negative",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "anchor_w_negative",
+      "seed": 104,
+      "expected_error": "ANCHOR_W_NONPOSITIVE"
+    },
+    {
+      "name": "coverage_reject_anchor_h_zero",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "anchor_h_zero",
+      "seed": 104,
+      "expected_error": "ANCHOR_H_NONPOSITIVE"
+    },
+    {
+      "name": "coverage_reject_anchor_h_negative",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "anchor_h_negative",
+      "seed": 104,
+      "expected_error": "ANCHOR_H_NONPOSITIVE"
+    },
+    {
+      "name": "coverage_reject_gx_negative",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "gx_negative",
+      "seed": 104,
+      "expected_error": "GX_NEGATIVE"
+    },
+    {
+      "name": "coverage_reject_gy_negative",
+      "expectation": "reject",
+      "raw_pred_shape": [
+        2,
+        33,
+        6
+      ],
+      "raw_pred_dtype": "float32",
+      "prior_pattern": "gy_negative",
+      "seed": 104,
+      "expected_error": "GY_NEGATIVE"
+    }
+  ]
+}

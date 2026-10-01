@@ -1,0 +1,7 @@
+.DS_Store
+
+# Local builds, generated test data, and Python caches
+build/
+__pycache__/
+*.py[cod]
+.venv/
