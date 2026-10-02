@@ -48,9 +48,9 @@ public:
             auto raw = rawQ_.AllocTensor<T>();
             auto prior = priorQ_.AllocTensor<float>();
             DataCopyPad(raw, rawGm_[start * 6],
-                        {1, count * 6 * sizeof(T), 0, 0, 0}, {false, 0, 0, 0});
+                        {1, static_cast<uint32_t>(count * 6 * sizeof(T)), 0, 0, 0}, {false, 0, 0, 0});
             DataCopyPad(prior, priorGm_[priorStart * 5],
-                        {1, count * 5 * sizeof(float), 0, 0, 0}, {false, 0, 0, 0});
+                        {1, count * 20, 0, 0, 0}, {false, 0, 0, 0});
             rawQ_.EnQue(raw);
             priorQ_.EnQue(prior);
             raw = rawQ_.DeQue<T>();
@@ -108,7 +108,7 @@ public:
             priorQ_.FreeTensor(prior);
             out = outQ_.DeQue<T>();
             DataCopyPad(outGm_[start * 5], out,
-                        {1, count * 5 * sizeof(T), 0, 0, 0});
+                        {1, static_cast<uint32_t>(count * 5 * sizeof(T)), 0, 0, 0});
             outQ_.FreeTensor(out);
             start += count;
         }
