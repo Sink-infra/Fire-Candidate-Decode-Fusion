@@ -171,6 +171,12 @@ public:
         for (; start < end_;) {
             auto raw = rawQ_.DeQue<T>();
             auto prior = priorQ_.DeQue<float>();
+            const uint32_t next = start + count;
+            uint32_t nextCount = 0;
+            if (next < end_) {
+                nextCount = ChunkCount(next);
+                CopyInput(next, nextCount);
+            }
             auto f = rawF_.Get<float>();
             if constexpr (IsSameType<T, half>::value) {
                 Cast(f, raw, RoundMode::CAST_NONE, count * 6);
@@ -222,12 +228,6 @@ public:
             outQ_.EnQue(out);
             rawQ_.FreeTensor(raw);
             priorQ_.FreeTensor(prior);
-            const uint32_t next = start + count;
-            uint32_t nextCount = 0;
-            if (next < end_) {
-                nextCount = ChunkCount(next);
-                CopyInput(next, nextCount);
-            }
             out = outQ_.DeQue<T>();
             DataCopyPad(outGm_[start * 5], out,
                         {1, static_cast<uint32_t>(count * 5 * sizeof(T)), 0, 0, 0});
