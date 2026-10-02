@@ -44,7 +44,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     const uint32_t minPerCore = DT_RAW_PRED == static_cast<uint32_t>(ge::DT_FLOAT) ? 1024 : 512;
     uint32_t EXEC_PATH = data->perCore > minPerCore && n > 512 ? 1 : 0;
     if (EXEC_PATH && DT_RAW_PRED == static_cast<uint32_t>(ge::DT_FLOAT) &&
-        data->perCore > 2048) EXEC_PATH = 2;
+        data->perCore > 2048) EXEC_PATH = 3;
     ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED, EXEC_PATH);
     return ge::GRAPH_SUCCESS;
 }
