@@ -45,9 +45,9 @@ public:
         Cast(outputIndex, temporary, RoundMode::CAST_FLOOR, TILE * 5);
         PipeBarrier<PIPE_V>();
         Cast(temporary, outputIndex, RoundMode::CAST_NONE, TILE * 5);
-        Muls(index, index, static_cast<float>(TILE), TILE * 5);
+        Muls(index, index, 256.0f, TILE * 5);
         PipeBarrier<PIPE_V>();
-        Muls(temporary, temporary, static_cast<float>(1 - static_cast<int32_t>(TILE * 5)), TILE * 5);
+        Muls(temporary, temporary, -1279.0f, TILE * 5);
         PipeBarrier<PIPE_V>();
         Add(index, index, temporary, TILE * 5);
         PipeBarrier<PIPE_V>();
