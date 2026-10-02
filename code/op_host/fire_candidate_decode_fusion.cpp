@@ -1,4 +1,5 @@
 #include "register/op_def_registry.h"
+#include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "../op_kernel/fire_candidate_decode_fusion_tiling.h"
 #include "../op_kernel/tiling_key_fire_candidate_decode_fusion.h"
@@ -37,6 +38,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED);
     return ge::GRAPH_SUCCESS;
 }
+IMPL_OP_OPTILING(FireCandidateDecodeFusion).Tiling(TilingFunc);
 }
 
 namespace ge {
