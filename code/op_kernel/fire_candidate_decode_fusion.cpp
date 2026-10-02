@@ -10,7 +10,7 @@ struct FirePipeType { using Type = TPipe; };
 template <>
 struct FirePipeType<true> { using Type = TPipe *; };
 
-template <class T, uint32_t TILE, bool EXTERNAL>
+template <class T, uint32_t TILE, bool EXTERNAL, bool PIPELINED = false>
 class KernelFireCandidateDecodeFusion {
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR decoded,
@@ -23,8 +23,8 @@ public:
         rawGm_.SetGlobalBuffer((__gm__ T *)raw);
         priorGm_.SetGlobalBuffer((__gm__ float *)prior);
         outGm_.SetGlobalBuffer((__gm__ T *)decoded);
-        Pipeline()->InitBuffer(rawQ_, 1, TILE * 6 * sizeof(T));
-        Pipeline()->InitBuffer(priorQ_, 1, TILE * 5 * sizeof(float));
+        Pipeline()->InitBuffer(rawQ_, PIPELINED ? 2 : 1, TILE * 6 * sizeof(T));
+        Pipeline()->InitBuffer(priorQ_, PIPELINED ? 2 : 1, TILE * 5 * sizeof(float));
         Pipeline()->InitBuffer(outQ_, 1, TILE * 5 * sizeof(T));
         Pipeline()->InitBuffer(rawF_, TILE * 6 * sizeof(float));
         Pipeline()->InitBuffer(channels_, TILE * 6 * sizeof(float));
@@ -65,6 +65,11 @@ public:
     }
 
     __aicore__ inline void Process() {
+        if constexpr (PIPELINED) ProcessPipeline();
+        else ProcessSingle();
+    }
+
+    __aicore__ inline void ProcessSingle() {
         for (uint32_t start = begin_; start < end_;) {
             const uint32_t priorStart = start % n_;
             uint32_t count = end_ - start;
@@ -138,6 +143,100 @@ public:
             start += count;
         }
     }
+    __aicore__ inline uint32_t ChunkCount(uint32_t start) {
+        uint32_t count = end_ - start;
+        const uint32_t remain = n_ - start % n_;
+        if (count > remain) count = remain;
+        if (count > TILE) count = TILE;
+        return count;
+    }
+
+    __aicore__ inline void CopyInput(uint32_t start, uint32_t count) {
+        const uint32_t priorStart = start % n_;
+        auto raw = rawQ_.AllocTensor<T>();
+        auto prior = priorQ_.AllocTensor<float>();
+        DataCopyPad(raw, rawGm_[start * 6],
+                    {1, static_cast<uint32_t>(count * 6 * sizeof(T)), 0, 0, 0}, {false, 0, 0, 0});
+        DataCopyPad(prior, priorGm_[priorStart * 5],
+                    {1, count * 20, 0, 0, 0}, {false, 0, 0, 0});
+        rawQ_.EnQue(raw);
+        priorQ_.EnQue(prior);
+    }
+
+    __aicore__ inline void ProcessPipeline() {
+        if (begin_ >= end_) return;
+        uint32_t start = begin_;
+        uint32_t count = ChunkCount(start);
+        CopyInput(start, count);
+        for (; start < end_;) {
+            auto raw = rawQ_.DeQue<T>();
+            auto prior = priorQ_.DeQue<float>();
+            auto f = rawF_.Get<float>();
+            if constexpr (IsSameType<T, half>::value) {
+                Cast(f, raw, RoundMode::CAST_NONE, count * 6);
+            } else {
+                DataCopy(f, raw, ((count * 6 + 7) / 8) * 8);
+            }
+            PipeBarrier<PIPE_V>();
+            Muls(f, f, -1.0f, count * 6);
+            PipeBarrier<PIPE_V>();
+            Exp(f, f, count * 6);
+            PipeBarrier<PIPE_V>();
+            Adds(f, f, 1.0f, count * 6);
+            PipeBarrier<PIPE_V>();
+            Div(f, ones_.Get<float>(), f, count * 6);
+            PipeBarrier<PIPE_V>();
+
+            auto c = channels_.Get<float>();
+            auto p = priorF_.Get<float>();
+            auto idx = offsets_.Get<uint32_t>();
+            for (uint32_t k = 0; k < 6; ++k) {
+                Gather(c[k * TILE], f, idx, k * sizeof(float), count);
+            }
+            for (uint32_t k = 0; k < 5; ++k) {
+                Gather(p[k * TILE], prior, idx[TILE], k * sizeof(float), count);
+            }
+            PipeBarrier<PIPE_V>();
+            Muls(c, c, 2.0f, TILE * 4);
+            PipeBarrier<PIPE_V>();
+            Adds(c, c, -0.5f, TILE * 2);
+            Mul(c[TILE * 2], c[TILE * 2], c[TILE * 2], TILE * 2);
+            Mul(c[TILE * 4], c[TILE * 4], c[TILE * 5], count);
+            PipeBarrier<PIPE_V>();
+            Add(c, c, p, TILE * 2);
+            Mul(c[TILE * 2], c[TILE * 2], p[TILE * 3], TILE * 2);
+            PipeBarrier<PIPE_V>();
+            for (uint32_t k = 0; k < 4; ++k) {
+                Mul(c[k * TILE], c[k * TILE], p[TILE * 2], count);
+            }
+            PipeBarrier<PIPE_V>();
+            auto result = aos_.Get<float>();
+            Gather(result, c, idx[TILE * 2], 0, count * 5);
+            PipeBarrier<PIPE_V>();
+            auto out = outQ_.AllocTensor<T>();
+            if constexpr (IsSameType<T, half>::value) {
+                Cast(out, result, RoundMode::CAST_RINT, count * 5);
+            } else {
+                DataCopy(out, result, ((count * 5 + 7) / 8) * 8);
+            }
+            outQ_.EnQue(out);
+            rawQ_.FreeTensor(raw);
+            priorQ_.FreeTensor(prior);
+            const uint32_t next = start + count;
+            uint32_t nextCount = 0;
+            if (next < end_) {
+                nextCount = ChunkCount(next);
+                CopyInput(next, nextCount);
+            }
+            out = outQ_.DeQue<T>();
+            DataCopyPad(outGm_[start * 5], out,
+                        {1, static_cast<uint32_t>(count * 5 * sizeof(T)), 0, 0, 0});
+            outQ_.FreeTensor(out);
+            start = next;
+            count = nextCount;
+        }
+    }
+
 private:
     __aicore__ inline TPipe *Pipeline() {
         if constexpr (EXTERNAL) return pipe_;
@@ -157,15 +256,39 @@ __global__ __aicore__ void fire_candidate_decode_fusion(
     GM_ADDR raw_pred, GM_ADDR priors, GM_ADDR decoded, GM_ADDR workspace, GM_ADDR tiling) {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    constexpr uint32_t TILE = EXEC_PATH == 0 ? 256 : 512;
+    if constexpr (EXEC_PATH == 1) {
+        if constexpr (IsSameType<DT_RAW_PRED, float>::value) {
+            TPipe pipe;
+            KernelFireCandidateDecodeFusion<DT_RAW_PRED, 512, true, true> op;
+            op.Init(raw_pred, priors, decoded, data, &pipe);
+            op.Process();
+        } else {
+            KernelFireCandidateDecodeFusion<DT_RAW_PRED, 512, false, true> op;
+            op.Init(raw_pred, priors, decoded, data);
+            op.Process();
+        }
+    } else {
     if constexpr (IsSameType<DT_RAW_PRED, float>::value) {
         TPipe pipe;
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, TILE, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
+        if (data.perCore > 256 && data.candidates > 256) {
+            KernelFireCandidateDecodeFusion<DT_RAW_PRED, 512, true> op;
+            op.Init(raw_pred, priors, decoded, data, &pipe);
+            op.Process();
+        } else {
+            KernelFireCandidateDecodeFusion<DT_RAW_PRED, 256, true> op;
+            op.Init(raw_pred, priors, decoded, data, &pipe);
+            op.Process();
+        }
     } else {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, TILE, false> op;
-        op.Init(raw_pred, priors, decoded, data);
-        op.Process();
+        if (data.perCore > 256 && data.candidates > 256) {
+            KernelFireCandidateDecodeFusion<DT_RAW_PRED, 512, false> op;
+            op.Init(raw_pred, priors, decoded, data);
+            op.Process();
+        } else {
+            KernelFireCandidateDecodeFusion<DT_RAW_PRED, 256, false> op;
+            op.Init(raw_pred, priors, decoded, data);
+            op.Process();
+        }
+    }
     }
 }
