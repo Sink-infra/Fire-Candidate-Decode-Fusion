@@ -27,15 +27,34 @@ public:
         pipe_.InitBuffer(ones_, TILE * 6 * sizeof(float));
         pipe_.InitBuffer(offsets_, TILE * 7 * sizeof(uint32_t));
         auto offsets = offsets_.Get<uint32_t>();
-        for (uint32_t i = 0; i < TILE; ++i) {
-            offsets.SetValue(i, i * 6 * sizeof(float));
-            offsets.SetValue(TILE + i, i * 5 * sizeof(float));
-        }
-        for (uint32_t i = 0; i < TILE * 5; ++i) {
-            offsets.SetValue(TILE * 2 + i, ((i % 5) * TILE + i / 5) * sizeof(float));
-        }
-        SetFlag<HardEvent::S_V>(EVENT_ID0);
-        WaitFlag<HardEvent::S_V>(EVENT_ID0);
+        auto index = aos_.Get<float>();
+        auto temporary = channels_.Get<float>();
+        CreateVecIndex(index, 0.0f, TILE);
+        PipeBarrier<PIPE_V>();
+        Muls(temporary, index, 24.0f, TILE);
+        PipeBarrier<PIPE_V>();
+        Cast(offsets.ReinterpretCast<int32_t>(), temporary, RoundMode::CAST_RINT, TILE);
+        Muls(temporary, index, 20.0f, TILE);
+        PipeBarrier<PIPE_V>();
+        Cast(offsets[TILE].ReinterpretCast<int32_t>(), temporary, RoundMode::CAST_RINT, TILE);
+        CreateVecIndex(index, 0.0f, TILE * 5);
+        PipeBarrier<PIPE_V>();
+        Muls(temporary, index, 0.2f, TILE * 5);
+        PipeBarrier<PIPE_V>();
+        auto outputIndex = offsets[TILE * 2].ReinterpretCast<int32_t>();
+        Cast(outputIndex, temporary, RoundMode::CAST_FLOOR, TILE * 5);
+        PipeBarrier<PIPE_V>();
+        Cast(temporary, outputIndex, RoundMode::CAST_NONE, TILE * 5);
+        Muls(index, index, static_cast<float>(TILE), TILE * 5);
+        PipeBarrier<PIPE_V>();
+        Muls(temporary, temporary, static_cast<float>(1 - static_cast<int32_t>(TILE * 5)), TILE * 5);
+        PipeBarrier<PIPE_V>();
+        Add(index, index, temporary, TILE * 5);
+        PipeBarrier<PIPE_V>();
+        Muls(index, index, 4.0f, TILE * 5);
+        PipeBarrier<PIPE_V>();
+        Cast(outputIndex, index, RoundMode::CAST_RINT, TILE * 5);
+        PipeBarrier<PIPE_V>();
         Duplicate(ones_.Get<float>(), 1.0f, TILE * 6);
     }
 
