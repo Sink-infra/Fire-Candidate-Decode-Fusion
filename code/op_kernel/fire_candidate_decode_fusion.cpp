@@ -152,31 +152,20 @@ private:
     uint32_t n_, begin_, end_;
 };
 
-template <typename DT_RAW_PRED>
+template <typename DT_RAW_PRED, uint32_t EXEC_PATH>
 __global__ __aicore__ void fire_candidate_decode_fusion(
     GM_ADDR raw_pred, GM_ADDR priors, GM_ADDR decoded, GM_ADDR workspace, GM_ADDR tiling) {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
+    constexpr uint32_t TILE = EXEC_PATH == 0 ? 256 : 512;
     if constexpr (IsSameType<DT_RAW_PRED, float>::value) {
         TPipe pipe;
-        if (data.perCore > 256 && data.candidates > 256) {
-            KernelFireCandidateDecodeFusion<DT_RAW_PRED, 512, true> op;
-            op.Init(raw_pred, priors, decoded, data, &pipe);
-            op.Process();
-        } else {
-            KernelFireCandidateDecodeFusion<DT_RAW_PRED, 256, true> op;
-            op.Init(raw_pred, priors, decoded, data, &pipe);
-            op.Process();
-        }
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, TILE, true> op;
+        op.Init(raw_pred, priors, decoded, data, &pipe);
+        op.Process();
     } else {
-        if (data.perCore > 256 && data.candidates > 256) {
-            KernelFireCandidateDecodeFusion<DT_RAW_PRED, 512, false> op;
-            op.Init(raw_pred, priors, decoded, data);
-            op.Process();
-        } else {
-            KernelFireCandidateDecodeFusion<DT_RAW_PRED, 256, false> op;
-            op.Init(raw_pred, priors, decoded, data);
-            op.Process();
-        }
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, TILE, false> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
     }
 }

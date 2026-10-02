@@ -41,7 +41,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     context->SetBlockDim(cores);
     context->GetWorkspaceSizes(1)[0] = 0;
     const uint32_t DT_RAW_PRED = static_cast<uint32_t>(rawDesc->GetDataType());
-    ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED);
+    const uint32_t EXEC_PATH = data->perCore > 256 && n > 256 ? 1 : 0;
+    ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED, EXEC_PATH);
     return ge::GRAPH_SUCCESS;
 }
 IMPL_OP_OPTILING(FireCandidateDecodeFusion).Tiling(TilingFunc);
