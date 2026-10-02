@@ -1,5 +1,4 @@
 #include "kernel_operator.h"
-#include "kernel_prof_trace_intf.h"
 #include "fire_candidate_decode_fusion_tiling.h"
 #include "tiling_key_fire_candidate_decode_fusion.h"
 
@@ -10,8 +9,11 @@ class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t TILE = 256;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR decoded,
-                               const FireCandidateDecodeFusionTilingData &data) {
-        MetricsProfStop();
+                               const FireCandidateDecodeFusionTilingData &data, GM_ADDR workspace) {
+        const uint64_t stamp = GetSystemCycle();
+        workspace_ = workspace;
+        for (uint32_t k = 0; k < 8; ++k) times_[k] = 0;
+        pipe_.InitBuffer(clockBuf_, 64);
         n_ = data.candidates;
         const uint32_t coreEnd = (GetBlockIdx() + 1) * data.perCore;
         end_ = data.total < coreEnd ? data.total : coreEnd;
@@ -58,10 +60,15 @@ public:
         Cast(outputIndex, index, RoundMode::CAST_RINT, TILE * 5);
         PipeBarrier<PIPE_V>();
         Duplicate(ones_.Get<float>(), 1.0f, TILE * 6);
+        PipeBarrier<PIPE_ALL>();
+        times_[0] = GetSystemCycle() - stamp;
     }
 
     __aicore__ inline void Process() {
         for (uint32_t start = begin_; start < end_;) {
+            PipeBarrier<PIPE_ALL>();
+            uint64_t stamp = GetSystemCycle();
+            uint64_t now;
             const uint32_t priorStart = start % n_;
             uint32_t count = end_ - start;
             if (count > n_ - priorStart) count = n_ - priorStart;
@@ -83,7 +90,9 @@ public:
                 DataCopy(f, raw, ((count * 6 + 7) / 8) * 8);
             }
             PipeBarrier<PIPE_V>();
-            MetricsProfStart();
+            PipeBarrier<PIPE_ALL>();
+            now = GetSystemCycle();
+            times_[1] += now - stamp; stamp = now;
             Muls(f, f, -1.0f, count * 6);
             PipeBarrier<PIPE_V>();
             Exp(f, f, count * 6);
@@ -93,7 +102,9 @@ public:
             Div(f, ones_.Get<float>(), f, count * 6);
             PipeBarrier<PIPE_V>();
 
-            MetricsProfStop();
+            PipeBarrier<PIPE_ALL>();
+            now = GetSystemCycle();
+            times_[2] += now - stamp; stamp = now;
             auto c = channels_.Get<float>();
             auto p = priorF_.Get<float>();
             auto idx = offsets_.Get<uint32_t>();
@@ -104,6 +115,9 @@ public:
                 Gather(p[k * TILE], prior, idx[TILE], k * sizeof(float), count);
             }
             PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_ALL>();
+            now = GetSystemCycle();
+            times_[3] += now - stamp; stamp = now;
             Muls(c, c, 2.0f, TILE * 4);
             PipeBarrier<PIPE_V>();
             Adds(c, c, -0.5f, TILE * 2);
@@ -120,6 +134,9 @@ public:
             auto result = aos_.Get<float>();
             Gather(result, c, idx[TILE * 2], 0, count * 5);
             PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_ALL>();
+            now = GetSystemCycle();
+            times_[4] += now - stamp; stamp = now;
             auto out = outQ_.AllocTensor<T>();
             if constexpr (IsSameType<T, half>::value) {
                 Cast(out, result, RoundMode::CAST_RINT, count * 5);
@@ -133,11 +150,26 @@ public:
             DataCopyPad(outGm_[start * 5], out,
                         {1, static_cast<uint32_t>(count * 5 * sizeof(T)), 0, 0, 0});
             outQ_.FreeTensor(out);
+            PipeBarrier<PIPE_ALL>();
+            now = GetSystemCycle();
+            times_[5] += now - stamp; stamp = now;
             start += count;
         }
+        auto clocks = clockBuf_.Get<uint64_t>();
+        for (uint32_t k = 0; k < 6; ++k) clocks.SetValue(k, times_[k]);
+        clocks.SetValue(6, GetBlockIdx());
+        clocks.SetValue(7, 0xface1234);
+        const auto event = static_cast<event_t>(pipe_.FetchEventID(HardEvent::S_MTE3));
+        SetFlag<HardEvent::S_MTE3>(event); WaitFlag<HardEvent::S_MTE3>(event);
+        GlobalTensor<uint64_t> clocksGm;
+        clocksGm.SetGlobalBuffer((__gm__ uint64_t *)workspace_);
+        DataCopy(clocksGm[GetBlockIdx() * 8], clocks, 8);
     }
 private:
     TPipe pipe_;
+    TBuf<QuePosition::VECCALC> clockBuf_;
+    GM_ADDR workspace_;
+    uint64_t times_[8];
     TQue<QuePosition::VECIN, 1> rawQ_, priorQ_;
     TQue<QuePosition::VECOUT, 1> outQ_;
     TBuf<QuePosition::VECCALC> rawF_, channels_, priorF_, aos_, ones_, offsets_;
@@ -152,6 +184,6 @@ __global__ __aicore__ void fire_candidate_decode_fusion(
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
     KernelFireCandidateDecodeFusion<DT_RAW_PRED> op;
-    op.Init(raw_pred, priors, decoded, data);
+    op.Init(raw_pred, priors, decoded, data, GetUserWorkspace(workspace));
     op.Process();
 }
