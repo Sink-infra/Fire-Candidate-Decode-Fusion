@@ -37,7 +37,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     auto *data = context->GetTilingData<FireCandidateDecodeFusionTilingData>();
     data->candidates = n;
     data->total = total;
-    data->perCore = ((total + cores * 63) / (cores * 64)) * 64;
+    data->perCore = ((total + cores * 64 - 1) / (cores * 64)) * 64;
     context->SetBlockDim(cores);
     context->GetWorkspaceSizes(1)[0] = 0;
     const uint32_t DT_RAW_PRED = static_cast<uint32_t>(rawDesc->GetDataType());
