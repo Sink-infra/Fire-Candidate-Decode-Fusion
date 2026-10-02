@@ -14,13 +14,15 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     const auto &r = raw->GetStorageShape();
     const auto &p = prior->GetStorageShape();
     if (r.GetDimNum() != 3 || p.GetDimNum() != 2 ||
-        r.GetDim(0) < 1 || r.GetDim(0) > 8 ||
-        r.GetDim(1) < 1 || r.GetDim(1) > 32768 ||
+        r.GetDim(0) < 1 || r.GetDim(1) < 1 ||
         r.GetDim(2) != 6 || p.GetDim(0) != r.GetDim(1) || p.GetDim(1) != 5 ||
         priorDesc->GetDataType() != ge::DT_FLOAT ||
         (rawDesc->GetDataType() != ge::DT_FLOAT && rawDesc->GetDataType() != ge::DT_FLOAT16)) {
         return ge::GRAPH_FAILED;
     }
+    const uint64_t maxCandidates = UINT32_MAX / 6;
+    if (static_cast<uint64_t>(r.GetDim(0)) >
+        maxCandidates / static_cast<uint64_t>(r.GetDim(1))) return ge::GRAPH_FAILED;
     auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint32_t n = r.GetDim(1);
     const uint32_t total = r.GetDim(0) * n;
