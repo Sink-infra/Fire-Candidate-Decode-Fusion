@@ -11,7 +11,8 @@ public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR decoded,
                                const FireCandidateDecodeFusionTilingData &data) {
         n_ = data.candidates;
-        end_ = Min(data.total, (GetBlockIdx() + 1) * data.perCore);
+        const uint32_t coreEnd = (GetBlockIdx() + 1) * data.perCore;
+        end_ = data.total < coreEnd ? data.total : coreEnd;
         begin_ = GetBlockIdx() * data.perCore;
         rawGm_.SetGlobalBuffer((__gm__ T *)raw);
         priorGm_.SetGlobalBuffer((__gm__ float *)prior);
@@ -41,7 +42,9 @@ public:
     __aicore__ inline void Process() {
         for (uint32_t start = begin_; start < end_;) {
             const uint32_t priorStart = start % n_;
-            const uint32_t count = Min(TILE, Min(end_ - start, n_ - priorStart));
+            uint32_t count = end_ - start;
+            if (count > n_ - priorStart) count = n_ - priorStart;
+            if (count > TILE) count = TILE;
             auto raw = rawQ_.AllocTensor<T>();
             auto prior = priorQ_.AllocTensor<float>();
             DataCopyPad(raw, rawGm_[start * 6],
