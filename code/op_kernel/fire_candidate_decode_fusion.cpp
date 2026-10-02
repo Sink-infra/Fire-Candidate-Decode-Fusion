@@ -52,9 +52,9 @@ public:
         Cast(outputIndex, temporary, RoundMode::CAST_FLOOR, TILE * 5);
         PipeBarrier<PIPE_V>();
         Cast(temporary, outputIndex, RoundMode::CAST_NONE, TILE * 5);
-        Muls(index, index, static_cast<float>(STRIDE), TILE * 5);
+        Muls(index, index, PADDED ? 520.0f : (TILE == 512 ? 512.0f : 256.0f), TILE * 5);
         PipeBarrier<PIPE_V>();
-        Muls(temporary, temporary, 1.0f - 5.0f * STRIDE, TILE * 5);
+        Muls(temporary, temporary, PADDED ? -2599.0f : (TILE == 512 ? -2559.0f : -1279.0f), TILE * 5);
         PipeBarrier<PIPE_V>();
         Add(index, index, temporary, TILE * 5);
         PipeBarrier<PIPE_V>();
