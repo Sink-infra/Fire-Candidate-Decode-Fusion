@@ -30,6 +30,10 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     if (cores == 0) cores = 1;
     const uint32_t groups = (total + 63) / 64;
     if (cores > groups) cores = groups;
+    if (n >= 256 && total <= cores * 256) {
+        const uint32_t tileGroups = (total + 255) / 256;
+        if (cores > tileGroups) cores = tileGroups;
+    }
     auto *data = context->GetTilingData<FireCandidateDecodeFusionTilingData>();
     data->candidates = n;
     data->total = total;
