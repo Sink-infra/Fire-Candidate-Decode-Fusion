@@ -1,4 +1,5 @@
 #include "kernel_operator.h"
+#include "kernel_prof_trace_intf.h"
 #include "fire_candidate_decode_fusion_tiling.h"
 #include "tiling_key_fire_candidate_decode_fusion.h"
 
@@ -10,6 +11,7 @@ class KernelFireCandidateDecodeFusion {
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR decoded,
                                const FireCandidateDecodeFusionTilingData &data) {
+        MetricsProfStop();
         n_ = data.candidates;
         const uint32_t coreEnd = (GetBlockIdx() + 1) * data.perCore;
         end_ = data.total < coreEnd ? data.total : coreEnd;
@@ -81,6 +83,7 @@ public:
                 DataCopy(f, raw, ((count * 6 + 7) / 8) * 8);
             }
             PipeBarrier<PIPE_V>();
+            MetricsProfStart();
             Muls(f, f, -1.0f, count * 6);
             PipeBarrier<PIPE_V>();
             Exp(f, f, count * 6);
@@ -90,6 +93,7 @@ public:
             Div(f, ones_.Get<float>(), f, count * 6);
             PipeBarrier<PIPE_V>();
 
+            MetricsProfStop();
             auto c = channels_.Get<float>();
             auto p = priorF_.Get<float>();
             auto idx = offsets_.Get<uint32_t>();
