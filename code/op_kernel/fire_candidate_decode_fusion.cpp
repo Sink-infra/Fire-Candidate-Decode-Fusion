@@ -8,7 +8,8 @@ template <class T, uint32_t TILE>
 class KernelFireCandidateDecodeFusion {
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR decoded,
-                               const FireCandidateDecodeFusionTilingData &data) {
+                               const FireCandidateDecodeFusionTilingData &data, TPipe *pipe) {
+        pipe_ = pipe;
         n_ = data.candidates;
         const uint32_t coreEnd = (GetBlockIdx() + 1) * data.perCore;
         end_ = data.total < coreEnd ? data.total : coreEnd;
@@ -16,15 +17,15 @@ public:
         rawGm_.SetGlobalBuffer((__gm__ T *)raw);
         priorGm_.SetGlobalBuffer((__gm__ float *)prior);
         outGm_.SetGlobalBuffer((__gm__ T *)decoded);
-        pipe_.InitBuffer(rawQ_, 1, TILE * 6 * sizeof(T));
-        pipe_.InitBuffer(priorQ_, 1, TILE * 5 * sizeof(float));
-        pipe_.InitBuffer(outQ_, 1, TILE * 5 * sizeof(T));
-        pipe_.InitBuffer(rawF_, TILE * 6 * sizeof(float));
-        pipe_.InitBuffer(channels_, TILE * 6 * sizeof(float));
-        pipe_.InitBuffer(priorF_, TILE * 5 * sizeof(float));
-        pipe_.InitBuffer(aos_, TILE * 5 * sizeof(float));
-        pipe_.InitBuffer(ones_, TILE * 6 * sizeof(float));
-        pipe_.InitBuffer(offsets_, TILE * 7 * sizeof(uint32_t));
+        pipe_->InitBuffer(rawQ_, 1, TILE * 6 * sizeof(T));
+        pipe_->InitBuffer(priorQ_, 1, TILE * 5 * sizeof(float));
+        pipe_->InitBuffer(outQ_, 1, TILE * 5 * sizeof(T));
+        pipe_->InitBuffer(rawF_, TILE * 6 * sizeof(float));
+        pipe_->InitBuffer(channels_, TILE * 6 * sizeof(float));
+        pipe_->InitBuffer(priorF_, TILE * 5 * sizeof(float));
+        pipe_->InitBuffer(aos_, TILE * 5 * sizeof(float));
+        pipe_->InitBuffer(ones_, TILE * 6 * sizeof(float));
+        pipe_->InitBuffer(offsets_, TILE * 7 * sizeof(uint32_t));
         auto offsets = offsets_.Get<uint32_t>();
         auto index = aos_.Get<float>();
         auto temporary = channels_.Get<float>();
@@ -132,7 +133,7 @@ public:
         }
     }
 private:
-    TPipe pipe_;
+    TPipe *pipe_;
     TQue<QuePosition::VECIN, 1> rawQ_, priorQ_;
     TQue<QuePosition::VECOUT, 1> outQ_;
     TBuf<QuePosition::VECCALC> rawF_, channels_, priorF_, aos_, ones_, offsets_;
@@ -146,13 +147,14 @@ __global__ __aicore__ void fire_candidate_decode_fusion(
     GM_ADDR raw_pred, GM_ADDR priors, GM_ADDR decoded, GM_ADDR workspace, GM_ADDR tiling) {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
+    TPipe pipe;
     if (data.perCore > 256 && data.candidates > 256) {
         KernelFireCandidateDecodeFusion<DT_RAW_PRED, 512> op;
-        op.Init(raw_pred, priors, decoded, data);
+        op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else {
         KernelFireCandidateDecodeFusion<DT_RAW_PRED, 256> op;
-        op.Init(raw_pred, priors, decoded, data);
+        op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     }
 }
