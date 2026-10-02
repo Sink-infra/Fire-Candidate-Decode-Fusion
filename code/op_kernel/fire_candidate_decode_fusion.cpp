@@ -4,9 +4,8 @@
 
 using namespace AscendC;
 
-template <class T>
+template <class T, uint32_t TILE>
 class KernelFireCandidateDecodeFusion {
-    static constexpr uint32_t TILE = 512;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR decoded,
                                const FireCandidateDecodeFusionTilingData &data) {
@@ -45,9 +44,9 @@ public:
         Cast(outputIndex, temporary, RoundMode::CAST_FLOOR, TILE * 5);
         PipeBarrier<PIPE_V>();
         Cast(temporary, outputIndex, RoundMode::CAST_NONE, TILE * 5);
-        Muls(index, index, 512.0f, TILE * 5);
+        Muls(index, index, TILE == 512 ? 512.0f : 256.0f, TILE * 5);
         PipeBarrier<PIPE_V>();
-        Muls(temporary, temporary, -2559.0f, TILE * 5);
+        Muls(temporary, temporary, TILE == 512 ? -2559.0f : -1279.0f, TILE * 5);
         PipeBarrier<PIPE_V>();
         Add(index, index, temporary, TILE * 5);
         PipeBarrier<PIPE_V>();
@@ -147,7 +146,13 @@ __global__ __aicore__ void fire_candidate_decode_fusion(
     GM_ADDR raw_pred, GM_ADDR priors, GM_ADDR decoded, GM_ADDR workspace, GM_ADDR tiling) {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    KernelFireCandidateDecodeFusion<DT_RAW_PRED> op;
-    op.Init(raw_pred, priors, decoded, data);
-    op.Process();
+    if (data.perCore > 256 && data.candidates > 256) {
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 512> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else {
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 256> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    }
 }
