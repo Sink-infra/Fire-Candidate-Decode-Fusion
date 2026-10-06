@@ -111,7 +111,7 @@ private:
 template <typename T, uint32_t Tile, bool Balanced = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
-    static constexpr bool Reuse = Tile == 1024 && sizeof(T) == 4;
+    static constexpr bool Reuse = Tile >= 768 && sizeof(T) == 4;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
@@ -123,8 +123,8 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(inRaw_, Tile == 1024 ? 2 : 1, Tile * 6 * sizeof(T));
-        pipe_.InitBuffer(inPrior_, Tile == 1024 ? 2 : 1, Tile * 5 * sizeof(float));
+        pipe_.InitBuffer(inRaw_, Tile >= 768 ? 2 : 1, Tile * 6 * sizeof(T));
+        pipe_.InitBuffer(inPrior_, Tile >= 768 ? 2 : 1, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
         if constexpr (!Reuse) pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
         pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
@@ -156,7 +156,7 @@ public:
             PipeBarrier<PIPE_V>();
             Sub(seq, seq, row, Tile * 5);
             PipeBarrier<PIPE_V>();
-            Muls(seq, seq, 1032.0f, Tile * 5);
+            Muls(seq, seq, 776.0f, Tile * 5);
             Cast(row, index, RoundMode::CAST_NONE, Tile * 5);
             PipeBarrier<PIPE_V>();
             Add(seq, seq, row, Tile * 5);
@@ -181,7 +181,7 @@ public:
         PipeBarrier<PIPE_V>();
         Sub(mod, seq, mod, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : 1032.0f)), Tile * 5);
+        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : 776.0f)), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
@@ -196,17 +196,17 @@ public:
     __aicore__ inline void Process()
     {
         const uint32_t tiles = Balanced ? segments_ : (n_ + Tile - 1) / Tile;
-        if constexpr (Tile == 1024) {
+        if constexpr (Tile >= 768) {
             if (GetBlockIdx() < batch_ * tiles) Load(GetBlockIdx(), tiles);
         }
         for (uint32_t task = GetBlockIdx(); task < batch_ * tiles; task += cores_) {
             const uint32_t b = task / tiles;
             const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
             const uint32_t count = Balanced ? n_ * ((task % tiles) + 1) / tiles - start : (start + Tile <= n_ ? Tile : n_ - start);
-            if constexpr (Tile != 1024) Load(task, tiles);
+            if constexpr (Tile < 768) Load(task, tiles);
             auto raw = inRaw_.DeQue<T>();
             auto prior = inPrior_.DeQue<float>();
-            if constexpr (Tile == 1024) {
+            if constexpr (Tile >= 768) {
                 if (task + cores_ < batch_ * tiles) Load(task + cores_, tiles);
             }
             LocalTensor<float> sig;
@@ -321,7 +321,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 1024> op;
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 768> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     }
