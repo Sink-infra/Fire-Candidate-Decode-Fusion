@@ -321,7 +321,7 @@ public:
         PipeBarrier<PIPE_V>();
         Sub(mod, seq, mod, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : (Tile == 768 ? 776.0f : 1032.0f))), Tile * 5);
+        Muls(mod, mod, static_cast<float>(int32_t((CachePrior && sizeof(T) == 2) ? Tile + 16 : Pitch)), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
@@ -404,7 +404,8 @@ private:
             auto dst = outQueue_.AllocTensor<T>();
             if constexpr (CachePrior && sizeof(T) == 2) {
                 auto quantized = packed_.Get<T>();
-                Cast(quantized, c, RoundMode::CAST_RINT, Pitch * 5);
+                for (uint32_t j = 0; j < 5; ++j)
+                    Cast(quantized[j * (Tile + 16)], c[j * Pitch], RoundMode::CAST_RINT, count);
                 PipeBarrier<PIPE_V>();
                 Gather(dst, quantized, packIndex_.Get<uint32_t>(), 0, uint64_t(128),
                        uint8_t((count * 5 + 127) / 128), 8);
