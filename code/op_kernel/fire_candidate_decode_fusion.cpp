@@ -115,116 +115,6 @@ private:
 };
 
 
-template <typename T>
-class SmallVectorDecode {
-    static constexpr uint32_t Pack = 16;
-    static constexpr uint32_t Pitch = 24;
-    template<typename U>
-    __aicore__ inline LocalTensor<U> At(TPosition pos, uint32_t address, uint32_t count)
-    {
-        return storage_.Get<U>()[address / sizeof(U)];
-    }
-public:
-    __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
-                               const FireCandidateDecodeFusionTilingData &d, TPipe *pipe)
-    {
-        pipe_ = pipe;
-        pipe_->InitBuffer(storage_, 5632);
-        n_ = d.candidates; tiles_ = n_ / Pack; total_ = d.batch * tiles_; cores_ = d.cores;
-        raw_.SetGlobalBuffer((__gm__ T *)raw);
-        prior_.SetGlobalBuffer((__gm__ float *)prior);
-        out_.SetGlobalBuffer((__gm__ T *)out);
-        auto ri = At<int32_t>(TPosition::VECCALC, 4096, 64);
-        auto pi = At<int32_t>(TPosition::VECCALC, 4352, 64);
-        CreateVecIndex(ri, int32_t(0), Pack);
-        CreateVecIndex(pi, int32_t(0), Pack);
-        PipeBarrier<PIPE_V>();
-        Muls(ri, ri, int32_t(24), Pack);
-        Muls(pi, pi, int32_t(20), Pack);
-        auto seq = At<float>(TPosition::VECCALC, 1536, 128);
-        auto row = At<float>(TPosition::VECCALC, 2048, 128);
-        auto index = At<int32_t>(TPosition::VECCALC, 4608, 128);
-        CreateVecIndex(seq, 0.0f, 128);
-        PipeBarrier<PIPE_V>();
-        Muls(row, seq, 0.2f, 128);
-        PipeBarrier<PIPE_V>();
-        Cast(index, row, RoundMode::CAST_FLOOR, 128);
-        PipeBarrier<PIPE_V>();
-        Cast(row, index, RoundMode::CAST_NONE, 128);
-        Muls(seq, seq, 96.0f, 128);
-        PipeBarrier<PIPE_V>();
-        Muls(row, row, -476.0f, 128);
-        PipeBarrier<PIPE_V>();
-        Add(seq, seq, row, 128);
-        PipeBarrier<PIPE_V>();
-        Cast(index, seq, RoundMode::CAST_RINT, 128);
-        Duplicate(At<float>(TPosition::VECCALC, 5120, 128), 1.0f, 128);
-    }
-    __aicore__ inline void Process()
-    {
-        for (uint32_t task = GetBlockIdx(); task < total_; task += cores_) {
-            const uint32_t start = (task % tiles_) * Pack;
-            const uint32_t i = (task / tiles_) * n_ + start;
-            auto raw = At<T>(TPosition::VECIN, 0, 512 / sizeof(T));
-            auto prior = At<float>(TPosition::VECIN, 512, 128);
-            DataCopy(raw, raw_[i * 6], Pack * 6);
-            DataCopy(prior, prior_[start * 5], Pack * 5);
-            SetFlag<HardEvent::MTE2_V>(0);
-            WaitFlag<HardEvent::MTE2_V>(0);
-            auto sig = At<float>(TPosition::VECCALC, 1536, 128);
-            if constexpr (sizeof(T) == 2) Cast(sig, raw, RoundMode::CAST_NONE, Pack * 6);
-            else DataCopy(sig, raw, Pack * 6);
-            PipeBarrier<PIPE_V>();
-            Muls(sig, sig, -1.0f, Pack * 6);
-            PipeBarrier<PIPE_V>();
-            Exp(sig, sig, Pack * 6);
-            PipeBarrier<PIPE_V>();
-            Adds(sig, sig, 1.0f, Pack * 6);
-            PipeBarrier<PIPE_V>();
-            Div(sig, At<float>(TPosition::VECCALC, 5120, 128), sig, Pack * 6);
-            PipeBarrier<PIPE_V>();
-            auto c = At<float>(TPosition::VECCALC, 2048, 11 * Pitch);
-            auto ri = At<uint32_t>(TPosition::VECCALC, 4096, 64);
-            auto pi = At<uint32_t>(TPosition::VECCALC, 4352, 64);
-            for (uint32_t j = 0; j < 6; ++j)
-                Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(Pack), uint8_t(1), 8);
-            for (uint32_t j = 0; j < 5; ++j)
-                Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(Pack), uint8_t(1), 8);
-            PipeBarrier<PIPE_V>();
-            Muls(c, c, 2.0f, Pitch * 4);
-            PipeBarrier<PIPE_V>();
-            Adds(c, c, -0.5f, Pitch * 2);
-            Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], Pitch * 2);
-            Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], Pack);
-            PipeBarrier<PIPE_V>();
-            Add(c, c, c[6 * Pitch], Pitch * 2);
-            Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], Pitch * 2);
-            PipeBarrier<PIPE_V>();
-            for (uint32_t j = 0; j < 4; ++j)
-                Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], Pack);
-            PipeBarrier<PIPE_V>();
-            auto packed = At<float>(TPosition::VECCALC, 1536, 128);
-            Gather(packed, c, At<uint32_t>(TPosition::VECCALC, 4608, 128), 0,
-                   uint64_t(64), uint8_t(2), 8);
-            PipeBarrier<PIPE_V>();
-            auto dst = At<T>(TPosition::VECOUT, 1024, 512 / sizeof(T));
-            if constexpr (sizeof(T) == 2) Cast(dst, packed, RoundMode::CAST_RINT, Pack * 5);
-            else DataCopy(dst, packed, Pack * 5);
-            SetFlag<HardEvent::V_MTE3>(0);
-            WaitFlag<HardEvent::V_MTE3>(0);
-            DataCopy(out_[i * 5], dst, Pack * 5);
-            SetFlag<HardEvent::MTE3_V>(0);
-            WaitFlag<HardEvent::MTE3_V>(0);
-        }
-    }
-private:
-    TPipe *pipe_;
-    TBuf<TPosition::VECCALC> storage_;
-    GlobalTensor<T> raw_, out_;
-    GlobalTensor<float> prior_;
-    uint32_t n_, tiles_, total_, cores_;
-};
-
 template <typename T, uint32_t Tile, bool Balanced = false>
 class MediumCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
@@ -610,12 +500,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 8) {
-        TPipe pipe;
-        SmallVectorDecode<DT_RAW_PRED> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
-    } else if constexpr (PATH == 0) {
+    if constexpr (PATH == 0) {
         SmallCandidateDecode<DT_RAW_PRED, 1> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
