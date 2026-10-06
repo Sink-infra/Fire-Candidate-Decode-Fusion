@@ -108,7 +108,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile>
+template <typename T, uint32_t Tile, bool Balanced = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
 public:
@@ -118,6 +118,7 @@ public:
         batch_ = data.batch;
         n_ = data.candidates;
         cores_ = data.cores;
+        segments_ = data.segments;
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
@@ -154,7 +155,7 @@ public:
         PipeBarrier<PIPE_V>();
         Sub(mod, seq, mod, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, (Tile == 512 ? 520.0f : 1032.0f), Tile * 5);
+        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : 1032.0f)), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
@@ -167,11 +168,11 @@ public:
 
     __aicore__ inline void Process()
     {
-        const uint32_t tiles = (n_ + Tile - 1) / Tile;
+        const uint32_t tiles = Balanced ? segments_ : (n_ + Tile - 1) / Tile;
         for (uint32_t task = GetBlockIdx(); task < batch_ * tiles; task += cores_) {
             const uint32_t b = task / tiles;
-            const uint32_t start = (task % tiles) * Tile;
-            const uint32_t count = start + Tile <= n_ ? Tile : n_ - start;
+            const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
+            const uint32_t count = Balanced ? n_ * ((task % tiles) + 1) / tiles - start : (start + Tile <= n_ ? Tile : n_ - start);
             auto raw = inRaw_.AllocTensor<T>();
             auto prior = inPrior_.AllocTensor<float>();
             DataCopyPad(raw, raw_[(b * n_ + start) * 6],
@@ -246,7 +247,7 @@ private:
     TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
-    uint32_t batch_, n_, cores_;
+    uint32_t batch_, n_, cores_, segments_;
 };
 
 template <typename DT_RAW_PRED, uint32_t PATH>
@@ -261,6 +262,10 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Process();
     } else if constexpr (PATH == 3) {
         SmallCandidateDecode<DT_RAW_PRED, 2> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 4) {
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 576, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 2) {
