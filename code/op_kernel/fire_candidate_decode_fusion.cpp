@@ -89,13 +89,24 @@ public:
                 DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             }
             PipeBarrier<PIPE_V>();
+            Maxs(sig, sig, -80.0f, count * 6);
+            PipeBarrier<PIPE_V>();
             Muls(sig, sig, -1.0f, count * 6);
             PipeBarrier<PIPE_V>();
             Exp(sig, sig, count * 6);
             PipeBarrier<PIPE_V>();
             Adds(sig, sig, 1.0f, count * 6);
             PipeBarrier<PIPE_V>();
-            Div(sig, ones_.Get<float>(), sig, count * 6);
+            auto inv = indexScratch_.Get<float>();
+            Reciprocal(inv, sig, count * 6);
+            PipeBarrier<PIPE_V>();
+            Mul(sig, sig, inv, count * 6);
+            PipeBarrier<PIPE_V>();
+            Muls(sig, sig, -1.0f, count * 6);
+            PipeBarrier<PIPE_V>();
+            Adds(sig, sig, 2.0f, count * 6);
+            PipeBarrier<PIPE_V>();
+            Mul(sig, sig, inv, count * 6);
             PipeBarrier<PIPE_V>();
             auto c = columns_.Get<float>();
             const auto ri = rawIndex_.Get<uint32_t>();
