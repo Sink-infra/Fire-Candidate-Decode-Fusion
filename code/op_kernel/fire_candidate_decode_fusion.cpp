@@ -571,29 +571,29 @@ public:
         DataCopy(gi, si, Tile * 6);
         PipeBarrier<PIPE_V>();
         Adds(si, si, int32_t(8), Tile * 6);
-        { uint64_t mask[2] = {0, 0x2082082082082082ULL};
+        { uint64_t mask[2] = {0x2082082082082082ULL, 0};
           Adds(gi[0], gi[0], int32_t(4), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x4104104104104104ULL};
+        { uint64_t mask[2] = {0x4104104104104104ULL, 0};
           Adds(gi[0], gi[0], int32_t(12), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x8208208208208208ULL};
+        { uint64_t mask[2] = {0x8208208208208208ULL, 0};
           Adds(gi[0], gi[0], int32_t(16), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0xc30c30c30c30c30ULL};
+        { uint64_t mask[2] = {0xc30c30c30c30c30ULL, 0};
           Adds(gi[0], gi[0], int32_t(8), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x8208208208208208ULL};
+        { uint64_t mask[2] = {0x8208208208208208ULL, 0};
           Adds(gi[64], gi[64], int32_t(4), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x410410410410410ULL};
+        { uint64_t mask[2] = {0x410410410410410ULL, 0};
           Adds(gi[64], gi[64], int32_t(12), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x820820820820820ULL};
+        { uint64_t mask[2] = {0x820820820820820ULL, 0};
           Adds(gi[64], gi[64], int32_t(16), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x30c30c30c30c30c3ULL};
+        { uint64_t mask[2] = {0x30c30c30c30c30c3ULL, 0};
           Adds(gi[64], gi[64], int32_t(8), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x820820820820820ULL};
+        { uint64_t mask[2] = {0x820820820820820ULL, 0};
           Adds(gi[128], gi[128], int32_t(4), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x1041041041041041ULL};
+        { uint64_t mask[2] = {0x1041041041041041ULL, 0};
           Adds(gi[128], gi[128], int32_t(12), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x2082082082082082ULL};
+        { uint64_t mask[2] = {0x2082082082082082ULL, 0};
           Adds(gi[128], gi[128], int32_t(16), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0xc30c30c30c30c30cULL};
+        { uint64_t mask[2] = {0xc30c30c30c30c30cULL, 0};
           Adds(gi[128], gi[128], int32_t(8), mask, uint8_t(Tile / 32), {1, 1, 24, 24}); }
 
         auto ri = rawIdx_.Get<int32_t>();
@@ -659,29 +659,29 @@ private:
         auto geom = geom_.Get<float>();
         auto stride = stride_.Get<float>();
         const uint8_t reps = uint8_t((count + 31) / 32);
-        { uint64_t mask[2] = {0, 0xf3cf3cf3cf3cf3cfULL}; Muls(sig[0], sig[0], 2.0f, mask, reps, {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0xcf3cf3cf3cf3cf3cULL}; Muls(sig[64], sig[64], 2.0f, mask, reps, {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x3cf3cf3cf3cf3cf3ULL}; Muls(sig[128], sig[128], 2.0f, mask, reps, {1, 1, 24, 24}); }
+        { uint64_t mask[2] = {0xf3cf3cf3cf3cf3cfULL, 0}; Muls(sig[0], sig[0], 2.0f, mask, reps, {1, 1, 24, 24}); }
+        { uint64_t mask[2] = {0xcf3cf3cf3cf3cf3cULL, 0}; Muls(sig[64], sig[64], 2.0f, mask, reps, {1, 1, 24, 24}); }
+        { uint64_t mask[2] = {0x3cf3cf3cf3cf3cf3ULL, 0}; Muls(sig[128], sig[128], 2.0f, mask, reps, {1, 1, 24, 24}); }
         PipeBarrier<PIPE_V>();
-        { uint64_t mask[2] = {0, 0x30c30c30c30c30c3ULL}; Adds(sig[0], sig[0], -0.5f, mask, reps, {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0xc30c30c30c30c30cULL}; Adds(sig[64], sig[64], -0.5f, mask, reps, {1, 1, 24, 24}); }
-        { uint64_t mask[2] = {0, 0xc30c30c30c30c30ULL}; Adds(sig[128], sig[128], -0.5f, mask, reps, {1, 1, 24, 24}); }
+        { uint64_t mask[2] = {0x30c30c30c30c30c3ULL, 0}; Adds(sig[0], sig[0], -0.5f, mask, reps, {1, 1, 24, 24}); }
+        { uint64_t mask[2] = {0xc30c30c30c30c30cULL, 0}; Adds(sig[64], sig[64], -0.5f, mask, reps, {1, 1, 24, 24}); }
+        { uint64_t mask[2] = {0xc30c30c30c30c30ULL, 0}; Adds(sig[128], sig[128], -0.5f, mask, reps, {1, 1, 24, 24}); }
         PipeBarrier<PIPE_V>();
-        { uint64_t mask[2] = {0, 0xc30c30c30c30c30cULL}; Mul(sig[0], sig[0], sig[0], mask, reps, {1, 1, 1, 24, 24, 24}); }
-        { uint64_t mask[2] = {0, 0xc30c30c30c30c30ULL}; Mul(sig[64], sig[64], sig[64], mask, reps, {1, 1, 1, 24, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x30c30c30c30c30c3ULL}; Mul(sig[128], sig[128], sig[128], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0xc30c30c30c30c30cULL, 0}; Mul(sig[0], sig[0], sig[0], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0xc30c30c30c30c30ULL, 0}; Mul(sig[64], sig[64], sig[64], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0x30c30c30c30c30c3ULL, 0}; Mul(sig[128], sig[128], sig[128], mask, reps, {1, 1, 1, 24, 24, 24}); }
         PipeBarrier<PIPE_V>();
-        { uint64_t mask[2] = {0, 0x30c30c30c30c30c3ULL}; Add(sig[0], sig[0], geom[0], mask, reps, {1, 1, 1, 24, 24, 24}); }
-        { uint64_t mask[2] = {0, 0xc30c30c30c30c30cULL}; Add(sig[64], sig[64], geom[64], mask, reps, {1, 1, 1, 24, 24, 24}); }
-        { uint64_t mask[2] = {0, 0xc30c30c30c30c30ULL}; Add(sig[128], sig[128], geom[128], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0x30c30c30c30c30c3ULL, 0}; Add(sig[0], sig[0], geom[0], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0xc30c30c30c30c30cULL, 0}; Add(sig[64], sig[64], geom[64], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0xc30c30c30c30c30ULL, 0}; Add(sig[128], sig[128], geom[128], mask, reps, {1, 1, 1, 24, 24, 24}); }
         PipeBarrier<PIPE_V>();
-        { uint64_t mask[2] = {0, 0xc30c30c30c30c30cULL}; Mul(sig[0], sig[0], geom[0], mask, reps, {1, 1, 1, 24, 24, 24}); }
-        { uint64_t mask[2] = {0, 0xc30c30c30c30c30ULL}; Mul(sig[64], sig[64], geom[64], mask, reps, {1, 1, 1, 24, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x30c30c30c30c30c3ULL}; Mul(sig[128], sig[128], geom[128], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0xc30c30c30c30c30cULL, 0}; Mul(sig[0], sig[0], geom[0], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0xc30c30c30c30c30ULL, 0}; Mul(sig[64], sig[64], geom[64], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0x30c30c30c30c30c3ULL, 0}; Mul(sig[128], sig[128], geom[128], mask, reps, {1, 1, 1, 24, 24, 24}); }
         PipeBarrier<PIPE_V>();
-        { uint64_t mask[2] = {0, 0xf3cf3cf3cf3cf3cfULL}; Mul(sig[0], sig[0], stride[0], mask, reps, {1, 1, 1, 24, 24, 24}); }
-        { uint64_t mask[2] = {0, 0xcf3cf3cf3cf3cf3cULL}; Mul(sig[64], sig[64], stride[64], mask, reps, {1, 1, 1, 24, 24, 24}); }
-        { uint64_t mask[2] = {0, 0x3cf3cf3cf3cf3cf3ULL}; Mul(sig[128], sig[128], stride[128], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0xf3cf3cf3cf3cf3cfULL, 0}; Mul(sig[0], sig[0], stride[0], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0xcf3cf3cf3cf3cf3cULL, 0}; Mul(sig[64], sig[64], stride[64], mask, reps, {1, 1, 1, 24, 24, 24}); }
+        { uint64_t mask[2] = {0x3cf3cf3cf3cf3cf3ULL, 0}; Mul(sig[128], sig[128], stride[128], mask, reps, {1, 1, 1, 24, 24, 24}); }
         PipeBarrier<PIPE_V>();
 
         auto dst = outQueue_.AllocTensor<T>();
