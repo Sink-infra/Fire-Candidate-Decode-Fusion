@@ -305,7 +305,7 @@ public:
             PipeBarrier<PIPE_V>();
             Sub(seq, seq, row, Tile * 5);
             PipeBarrier<PIPE_V>();
-            Muls(seq, seq, float(Pitch), Tile * 5);
+            Muls(seq, seq, (Tile == 704 ? 712.0f : (Tile == 768 ? 776.0f : 1032.0f)), Tile * 5);
             Cast(row, index, RoundMode::CAST_NONE, Tile * 5);
             PipeBarrier<PIPE_V>();
             Add(seq, seq, row, Tile * 5);
@@ -330,7 +330,7 @@ public:
         PipeBarrier<PIPE_V>();
         Sub(mod, seq, mod, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : float(Pitch))), Tile * 5);
+        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : (Tile == 704 ? 712.0f : (Tile == 768 ? 776.0f : 1032.0f)))), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
