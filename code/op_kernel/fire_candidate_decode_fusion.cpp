@@ -115,7 +115,6 @@ public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
     {
-        const int64_t initBegin = GetSystemCycle();
         batch_ = data.batch;
         n_ = data.candidates;
         cores_ = data.cores;
@@ -123,8 +122,8 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(inRaw_, 1, Tile * 6 * sizeof(T));
-        pipe_.InitBuffer(inPrior_, 1, Tile * 5 * sizeof(float));
+        pipe_.InitBuffer(inRaw_, Tile == 1024 ? 2 : 1, Tile * 6 * sizeof(T));
+        pipe_.InitBuffer(inPrior_, Tile == 1024 ? 2 : 1, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
         pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
         pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
@@ -164,35 +163,25 @@ public:
         PipeBarrier<PIPE_V>();
         Cast(index, mod, RoundMode::CAST_RINT, Tile * 5);
         Duplicate(ones_.Get<float>(), 1.0f, 64);
-        PipeBarrier<PIPE_ALL>();
-        stages_[0] = GetSystemCycle() - initBegin;
-        for (uint32_t q = 1; q < 7; ++q) stages_[q] = 0;
+        PipeBarrier<PIPE_V>();
     }
 
     __aicore__ inline void Process()
     {
         const uint32_t tiles = Balanced ? segments_ : (n_ + Tile - 1) / Tile;
+        if constexpr (Tile == 1024) {
+            if (GetBlockIdx() < batch_ * tiles) Load(GetBlockIdx(), tiles);
+        }
         for (uint32_t task = GetBlockIdx(); task < batch_ * tiles; task += cores_) {
             const uint32_t b = task / tiles;
             const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
             const uint32_t count = Balanced ? n_ * ((task % tiles) + 1) / tiles - start : (start + Tile <= n_ ? Tile : n_ - start);
-            PipeBarrier<PIPE_ALL>();
-            int64_t mark = GetSystemCycle();
-            auto raw = inRaw_.AllocTensor<T>();
-            auto prior = inPrior_.AllocTensor<float>();
-            DataCopyPad(raw, raw_[(b * n_ + start) * 6],
-                        DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
-                        DataCopyPadExtParams<T>{false, 0, 0, 0});
-            DataCopyPad(prior, prior_[start * 5],
-                        DataCopyExtParams{1, count * 20, 0, 0, 0},
-                        DataCopyPadExtParams<float>{false, 0, 0, 0});
-            inRaw_.EnQue(raw);
-            inPrior_.EnQue(prior);
-            raw = inRaw_.DeQue<T>();
-            prior = inPrior_.DeQue<float>();
-            PipeBarrier<PIPE_ALL>();
-            stages_[1] += GetSystemCycle() - mark;
-            mark = GetSystemCycle();
+            if constexpr (Tile != 1024) Load(task, tiles);
+            auto raw = inRaw_.DeQue<T>();
+            auto prior = inPrior_.DeQue<float>();
+            if constexpr (Tile == 1024) {
+                if (task + cores_ < batch_ * tiles) Load(task + cores_, tiles);
+            }
             auto sig = rawFloat_.Get<float>();
             if constexpr (sizeof(T) == 2) {
                 Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
@@ -209,9 +198,6 @@ public:
             Div(sig, ones_.Get<float>(), sig, uint64_t(64),
                 uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
             PipeBarrier<PIPE_V>();
-            PipeBarrier<PIPE_ALL>();
-            stages_[2] += GetSystemCycle() - mark;
-            mark = GetSystemCycle();
             auto c = columns_.Get<float>();
             const auto ri = rawIndex_.Get<uint32_t>();
             const auto pi = priorIndex_.Get<uint32_t>();
@@ -220,9 +206,6 @@ public:
             for (uint32_t j = 0; j < 5; ++j)
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             PipeBarrier<PIPE_V>();
-            PipeBarrier<PIPE_ALL>();
-            stages_[3] += GetSystemCycle() - mark;
-            mark = GetSystemCycle();
             Muls(c, c, 2.0f, Pitch * 4);
             PipeBarrier<PIPE_V>();
             Adds(c, c, -0.5f, Pitch * 2);
@@ -235,9 +218,6 @@ public:
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
-            PipeBarrier<PIPE_ALL>();
-            stages_[4] += GetSystemCycle() - mark;
-            mark = GetSystemCycle();
             auto packed = packed_.Get<float>();
             Gather(packed, c, packIndex_.Get<uint32_t>(), 0, uint64_t(64), uint8_t((count * 5 + 63) / 64), 8);
             PipeBarrier<PIPE_V>();
@@ -247,9 +227,6 @@ public:
             } else {
                 DataCopy(dst, packed, ((count * 5 + 7) / 8) * 8);
             }
-            PipeBarrier<PIPE_ALL>();
-            stages_[5] += GetSystemCycle() - mark;
-            mark = GetSystemCycle();
             outQueue_.EnQue(dst);
             dst = outQueue_.DeQue<T>();
             DataCopyPad(out_[(b * n_ + start) * 5], dst,
@@ -257,23 +234,27 @@ public:
             outQueue_.FreeTensor(dst);
             inRaw_.FreeTensor(raw);
             inPrior_.FreeTensor(prior);
-            PipeBarrier<PIPE_ALL>();
-            stages_[6] += GetSystemCycle() - mark;
-            mark = GetSystemCycle();
-
-        }
-        PipeBarrier<PIPE_ALL>();
-
-        const uint32_t task = GetBlockIdx();
-        const uint32_t b = task / tiles;
-        const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
-        if constexpr (sizeof(T) == 4) {
-            for (uint32_t q = 0; q < 7; ++q)
-                out_.SetValue((b * n_ + start) * 5 + q, float(stages_[q]) * 0.02f);
         }
     }
 private:
-    int64_t stages_[7];
+    __aicore__ inline void Load(uint32_t task, uint32_t tiles)
+    {
+        const uint32_t b = task / tiles;
+        const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
+        const uint32_t count = Balanced ? n_ * ((task % tiles) + 1) / tiles - start :
+            (start + Tile <= n_ ? Tile : n_ - start);
+        auto raw = inRaw_.AllocTensor<T>();
+        auto prior = inPrior_.AllocTensor<float>();
+        DataCopyPad(raw, raw_[(b * n_ + start) * 6],
+            DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
+            DataCopyPadExtParams<T>{false, 0, 0, 0});
+        DataCopyPad(prior, prior_[start * 5],
+            DataCopyExtParams{1, count * 20, 0, 0, 0},
+            DataCopyPadExtParams<float>{false, 0, 0, 0});
+        inRaw_.EnQue(raw);
+        inPrior_.EnQue(prior);
+    }
+
     TPipe pipe_;
     TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
     TQue<QuePosition::VECOUT, 1> outQueue_;
