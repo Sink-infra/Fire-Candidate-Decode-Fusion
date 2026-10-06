@@ -29,6 +29,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
     const uint32_t total = data->batch * data->candidates;
     uint32_t PATH = total <= 128 ? (total <= platform.GetCoreNumAiv() ? 0 : 3) : (total <= 65536 ? 2 : 1);
     data->segments = 0;
+    if ((PATH == 0 || PATH == 3) && dtype == ge::DT_FLOAT16 && data->candidates % 8 == 0) PATH = 5;
     if (PATH == 2) {
         cores = platform.GetCoreNumAiv();
         if (cores > 32) cores = 32;
