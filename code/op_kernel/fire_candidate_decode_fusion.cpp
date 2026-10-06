@@ -118,8 +118,19 @@ public:
         PipeBarrier<PIPE_ALL>();
         const uint32_t task = GetBlockIdx();
         const uint32_t i = (task / tiles_) * n_ + (task % tiles_) * Pack;
+        auto diag = resultBuf_.Get<float>();
         for (uint32_t j = 0; j < 5; ++j)
-            out_.SetValue(i * 5 + j, T(float(stages_[j]) * 0.02f));
+            diag.SetValue(j, float(stages_[j]) * 0.02f);
+        auto sv = pipe_.FetchEventID(HardEvent::S_V);
+        SetFlag<HardEvent::S_V>(sv);
+        WaitFlag<HardEvent::S_V>(sv);
+        auto dst = outQueue_.Get<T>();
+        if constexpr (sizeof(T) == 2) Cast(dst, diag, RoundMode::CAST_RINT, 5);
+        else DataCopy(dst, diag, 8);
+        auto vm = pipe_.FetchEventID(HardEvent::V_MTE3);
+        SetFlag<HardEvent::V_MTE3>(vm);
+        WaitFlag<HardEvent::V_MTE3>(vm);
+        DataCopyPad(out_[i * 5], dst, DataCopyExtParams{1, 5 * uint32_t(sizeof(T)), 0, 0, 0});
     }
 private:
     int64_t stages_[5];
