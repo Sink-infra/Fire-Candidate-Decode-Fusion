@@ -4,98 +4,107 @@
 
 using namespace AscendC;
 
-template <typename T>
+template <typename T, uint32_t Pack>
 class SmallCandidateDecode {
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &d)
     {
-        n_ = d.candidates; total_ = d.batch * n_; cores_ = d.cores;
+        n_ = d.candidates; tiles_ = (n_ + Pack - 1) / Pack; total_ = d.batch * tiles_; cores_ = d.cores;
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(inRaw_, 1, 32);
-        pipe_.InitBuffer(inPrior_, 1, 32);
-        pipe_.InitBuffer(outQueue_, 1, 32);
-        pipe_.InitBuffer(sigBuf_, 32);
-        pipe_.InitBuffer(resultBuf_, 32);
-        pipe_.InitBuffer(oneBuf_, 32);
-        Duplicate(oneBuf_.Get<float>(), 1.0f, 8);
+        pipe_.InitBuffer(inRaw_, Pack == 1 ? 32 : 64);
+        pipe_.InitBuffer(inPrior_, Pack == 1 ? 32 : 64);
+        pipe_.InitBuffer(outQueue_, Pack == 1 ? 32 : 64);
+        pipe_.InitBuffer(sigBuf_, Pack == 1 ? 32 : 64);
+        pipe_.InitBuffer(resultBuf_, Pack == 1 ? 32 : 64);
+        pipe_.InitBuffer(oneBuf_, Pack == 1 ? 32 : 64);
+        Duplicate(oneBuf_.Get<float>(), 1.0f, Pack == 1 ? 8 : 16);
     }
     __aicore__ inline void Process()
     {
-        for (uint32_t i = GetBlockIdx(); i < total_; i += cores_) {
-            auto raw = inRaw_.AllocTensor<T>();
-            auto prior = inPrior_.AllocTensor<float>();
+        for (uint32_t task = GetBlockIdx(); task < total_; task += cores_) {
+            const uint32_t i = (task / tiles_) * n_ + (task % tiles_) * Pack;
+            const uint32_t remaining = n_ - (task % tiles_) * Pack;
+            const uint32_t count = remaining < Pack ? remaining : Pack;
+            auto raw = inRaw_.Get<T>();
+            auto prior = inPrior_.Get<float>();
             DataCopyPad(raw, raw_[i * 6],
-                DataCopyExtParams{1, 6 * uint32_t(sizeof(T)), 0, 0, 0},
+                DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
                 DataCopyPadExtParams<T>{false, 0, 0, 0});
             DataCopyPad(prior, prior_[(i % n_) * 5],
-                DataCopyExtParams{1, 20, 0, 0, 0},
+                DataCopyExtParams{1, count * 20, 0, 0, 0},
                 DataCopyPadExtParams<float>{false, 0, 0, 0});
-            inRaw_.EnQue(raw); inPrior_.EnQue(prior);
-            raw = inRaw_.DeQue<T>(); prior = inPrior_.DeQue<float>();
+            auto mv = pipe_.FetchEventID(HardEvent::MTE2_V);
+            SetFlag<HardEvent::MTE2_V>(mv);
+            WaitFlag<HardEvent::MTE2_V>(mv);
             auto sig = sigBuf_.Get<float>();
             if constexpr (sizeof(T) == 2)
-                Cast(sig, raw, RoundMode::CAST_NONE, 6);
+                Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
             else
-                DataCopy(sig, raw, 8);
+                DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             PipeBarrier<PIPE_V>();
-            Muls(sig, sig, -1.0f, 6);
+            Muls(sig, sig, -1.0f, count * 6);
             PipeBarrier<PIPE_V>();
-            Exp(sig, sig, 6);
+            Exp(sig, sig, count * 6);
             PipeBarrier<PIPE_V>();
-            Adds(sig, sig, 1.0f, 6);
+            Adds(sig, sig, 1.0f, count * 6);
             PipeBarrier<PIPE_V>();
-            Div(sig, oneBuf_.Get<float>(), sig, 6);
+            Div(sig, oneBuf_.Get<float>(), sig, count * 6);
             auto vs = pipe_.FetchEventID(HardEvent::V_S);
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
             auto result = resultBuf_.Get<float>();
-            const float stride = prior.GetValue(2);
-            float x = 2.0f * sig.GetValue(0);
+            for (uint32_t row = 0; row < count; ++row) {
+            const float stride = prior.GetValue(row * 5 + 2);
+            float x = 2.0f * sig.GetValue(row * 6 + 0);
             x = x - 0.5f;
-            x = x + prior.GetValue(0);
+            x = x + prior.GetValue(row * 5 + 0);
             x = x * stride;
-            float y = 2.0f * sig.GetValue(1);
+            float y = 2.0f * sig.GetValue(row * 6 + 1);
             y = y - 0.5f;
-            y = y + prior.GetValue(1);
+            y = y + prior.GetValue(row * 5 + 1);
             y = y * stride;
-            float w = 2.0f * sig.GetValue(2);
+            float w = 2.0f * sig.GetValue(row * 6 + 2);
             w = w * w;
-            w = w * prior.GetValue(3);
+            w = w * prior.GetValue(row * 5 + 3);
             w = w * stride;
-            float h = 2.0f * sig.GetValue(3);
+            float h = 2.0f * sig.GetValue(row * 6 + 3);
             h = h * h;
-            h = h * prior.GetValue(4);
+            h = h * prior.GetValue(row * 5 + 4);
             h = h * stride;
-            const float score = sig.GetValue(4) * sig.GetValue(5);
-            result.SetValue(0, x); result.SetValue(1, y);
-            result.SetValue(2, w); result.SetValue(3, h);
-            result.SetValue(4, score);
+            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
+            result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
+            result.SetValue(row * 5 + 4, score);
+            }
             auto sv = pipe_.FetchEventID(HardEvent::S_V);
             SetFlag<HardEvent::S_V>(sv);
             WaitFlag<HardEvent::S_V>(sv);
-            auto dst = outQueue_.AllocTensor<T>();
+            auto dst = outQueue_.Get<T>();
             if constexpr (sizeof(T) == 2)
-                Cast(dst, result, RoundMode::CAST_RINT, 5);
+                Cast(dst, result, RoundMode::CAST_RINT, count * 5);
             else
-                DataCopy(dst, result, 8);
-            outQueue_.EnQue(dst); dst = outQueue_.DeQue<T>();
+                DataCopy(dst, result, ((count * 5 + 7) / 8) * 8);
+            auto vm = pipe_.FetchEventID(HardEvent::V_MTE3);
+            SetFlag<HardEvent::V_MTE3>(vm);
+            WaitFlag<HardEvent::V_MTE3>(vm);
             DataCopyPad(out_[i * 5], dst,
-                DataCopyExtParams{1, 5 * uint32_t(sizeof(T)), 0, 0, 0});
-            outQueue_.FreeTensor(dst);
-            inRaw_.FreeTensor(raw); inPrior_.FreeTensor(prior);
+                DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
+            auto om = pipe_.FetchEventID(HardEvent::MTE3_V);
+            SetFlag<HardEvent::MTE3_V>(om);
+            WaitFlag<HardEvent::MTE3_V>(om);
         }
     }
 private:
     TPipe pipe_;
-    TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
-    TQue<QuePosition::VECOUT, 1> outQueue_;
+    TBuf<TPosition::VECIN> inRaw_, inPrior_;
+    TBuf<TPosition::VECOUT> outQueue_;
     TBuf<TPosition::VECCALC> sigBuf_, resultBuf_, oneBuf_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
-    uint32_t n_, total_, cores_;
+    uint32_t n_, total_, cores_, tiles_;
 };
 
 
@@ -247,7 +256,11 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
     if constexpr (PATH == 0) {
-        SmallCandidateDecode<DT_RAW_PRED> op;
+        SmallCandidateDecode<DT_RAW_PRED, 1> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 3) {
+        SmallCandidateDecode<DT_RAW_PRED, 2> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 2) {
