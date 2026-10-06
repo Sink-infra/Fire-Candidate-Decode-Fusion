@@ -305,7 +305,7 @@ public:
             PipeBarrier<PIPE_V>();
             Sub(seq, seq, row, Tile * 5);
             PipeBarrier<PIPE_V>();
-            Muls(seq, seq, (Tile == 768 ? 776.0f : 1032.0f), Tile * 5);
+            Muls(seq, seq, float(Pitch), Tile * 5);
             Cast(row, index, RoundMode::CAST_NONE, Tile * 5);
             PipeBarrier<PIPE_V>();
             Add(seq, seq, row, Tile * 5);
@@ -330,7 +330,7 @@ public:
         PipeBarrier<PIPE_V>();
         Sub(mod, seq, mod, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : (Tile == 768 ? 776.0f : 1032.0f))), Tile * 5);
+        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : float(Pitch))), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
@@ -513,7 +513,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 6) {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 768, false, true> op;
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 704, false, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 7) {
