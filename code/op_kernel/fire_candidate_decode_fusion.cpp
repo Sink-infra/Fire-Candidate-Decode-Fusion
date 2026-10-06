@@ -263,8 +263,9 @@ class KernelFireCandidateDecodeFusion {
     static constexpr bool Reuse = (Tile == 1024 || CachePrior) && sizeof(T) == 4;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
-                               const FireCandidateDecodeFusionTilingData &data)
+                               const FireCandidateDecodeFusionTilingData &data, TPipe *pipe)
     {
+        pipe_ = pipe;
         batch_ = data.batch;
         n_ = data.candidates;
         cores_ = data.cores;
@@ -272,16 +273,16 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(inRaw_, (Tile == 1024 || CachePrior) ? 2 : 1, Tile * 6 * sizeof(T));
-        pipe_.InitBuffer(inPrior_, (Tile == 1024 && !CachePrior) ? 2 : 1, Tile * 5 * sizeof(float));
-        pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
-        if constexpr (!Reuse) pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
-        pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
-        if constexpr (!Reuse) pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
-        pipe_.InitBuffer(ones_, 64 * sizeof(float));
-        pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
-        pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
-        pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
+        pipe_->InitBuffer(inRaw_, (Tile == 1024 || CachePrior) ? 2 : 1, Tile * 6 * sizeof(T));
+        pipe_->InitBuffer(inPrior_, (Tile == 1024 && !CachePrior) ? 2 : 1, Tile * 5 * sizeof(float));
+        pipe_->InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
+        if constexpr (!Reuse) pipe_->InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
+        pipe_->InitBuffer(columns_, Pitch * 11 * sizeof(float));
+        if constexpr (!Reuse) pipe_->InitBuffer(packed_, Tile * 5 * sizeof(float));
+        pipe_->InitBuffer(ones_, 64 * sizeof(float));
+        pipe_->InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
+        pipe_->InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
+        pipe_->InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
         auto r = rawIndex_.Get<int32_t>();
         auto p = priorIndex_.Get<int32_t>();
         CreateVecIndex(r, int32_t(0), Tile);
@@ -484,7 +485,7 @@ private:
         inPrior_.EnQue(prior);
     }
 
-    TPipe pipe_;
+    TPipe *pipe_;
     TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
     TQue<QuePosition::VECOUT, 1> outQueue_;
     TBuf<TPosition::VECCALC> rawFloat_, columns_, packed_, ones_;
@@ -513,12 +514,14 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 6) {
+        TPipe pipe;
         KernelFireCandidateDecodeFusion<DT_RAW_PRED, 768, false, true> op;
-        op.Init(raw_pred, priors, decoded, data);
+        op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 7) {
+        TPipe pipe;
         KernelFireCandidateDecodeFusion<DT_RAW_PRED, 1024, false, true> op;
-        op.Init(raw_pred, priors, decoded, data);
+        op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 4) {
         MediumCandidateDecodeFusion<DT_RAW_PRED, 576, true> op;
@@ -529,8 +532,9 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else {
+        TPipe pipe;
         KernelFireCandidateDecodeFusion<DT_RAW_PRED, 1024> op;
-        op.Init(raw_pred, priors, decoded, data);
+        op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     }
 }
