@@ -5,9 +5,8 @@
 using namespace AscendC;
 #include "small_candidate_decode.h"
 
-template <typename T>
+template <typename T, uint32_t Tile>
 class KernelFireCandidateDecodeFusion {
-    static constexpr uint32_t Tile = 1024;
     static constexpr uint32_t Pitch = Tile + 8;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -52,7 +51,7 @@ public:
         PipeBarrier<PIPE_V>();
         Sub(mod, seq, mod, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, 1032.0f, Tile * 5);
+        Muls(mod, mod, (Tile == 512 ? 520.0f : 1032.0f), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
@@ -157,8 +156,12 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         SmallCandidateDecode<DT_RAW_PRED> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
+    } else if constexpr (PATH == 2) {
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 512> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
     } else {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED> op;
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 1024> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     }
