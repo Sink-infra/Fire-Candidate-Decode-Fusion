@@ -26,7 +26,13 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
     data->candidates = r.GetDim(1);
     const uint32_t tiles = (data->candidates + 255) / 256;
     if (cores > tiles * data->batch) cores = tiles * data->batch;
-    uint32_t PATH = data->batch * data->candidates <= 128 ? 0 : 1;
+    const uint32_t total = data->batch * data->candidates;
+    uint32_t PATH = total <= 128 ? 0 : (total <= 65536 ? 2 : 1);
+    if (PATH == 2) {
+        cores = platform.GetCoreNumAiv();
+        const uint32_t tasks = data->batch * ((data->candidates + 511) / 512);
+        if (cores > tasks) cores = tasks;
+    }
     if (PATH == 0) {
         cores = platform.GetCoreNumAiv();
         if (cores > data->batch * data->candidates) cores = data->batch * data->candidates;
