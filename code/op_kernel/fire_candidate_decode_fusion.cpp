@@ -88,11 +88,11 @@ public:
                 DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             }
             PipeBarrier<PIPE_V>();
-            Muls(sig, sig, -1.0f, count * 6);
+            Muls(sig, sig, -1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             PipeBarrier<PIPE_V>();
-            Exp(sig, sig, count * 6);
+            Exp(sig, sig, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             PipeBarrier<PIPE_V>();
-            Adds(sig, sig, 1.0f, count * 6);
+            Adds(sig, sig, 1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             PipeBarrier<PIPE_V>();
             Div(sig, ones_.Get<float>(), sig, uint64_t(64),
                 uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
@@ -101,9 +101,9 @@ public:
             const auto ri = rawIndex_.Get<uint32_t>();
             const auto pi = priorIndex_.Get<uint32_t>();
             for (uint32_t j = 0; j < 6; ++j)
-                Gather(c[j * Pitch], sig, ri, j * 4, count);
+                Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             for (uint32_t j = 0; j < 5; ++j)
-                Gather(c[(j + 6) * Pitch], prior, pi, j * 4, count);
+                Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             PipeBarrier<PIPE_V>();
             Muls(c, c, 2.0f, Pitch * 4);
             PipeBarrier<PIPE_V>();
@@ -118,7 +118,7 @@ public:
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
             auto packed = packed_.Get<float>();
-            Gather(packed, c, packIndex_.Get<uint32_t>(), 0, count * 5);
+            Gather(packed, c, packIndex_.Get<uint32_t>(), 0, uint64_t(64), uint8_t((count * 5 + 63) / 64), 8);
             PipeBarrier<PIPE_V>();
             auto dst = outQueue_.AllocTensor<T>();
             if constexpr (sizeof(T) == 2) {
