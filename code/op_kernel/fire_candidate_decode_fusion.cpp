@@ -260,8 +260,6 @@ private:
 template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
-    static constexpr bool Transposed = CachePrior && Tile == 768 && sizeof(T) == 2;
-    static constexpr uint32_t HalfPitch = Tile + 16;
     static constexpr bool Reuse = (Tile == 1024 || CachePrior) && sizeof(T) == 4;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -279,15 +277,11 @@ public:
         pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
         if constexpr (!Reuse) pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
         pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
-        if constexpr (Transposed) {
-            pipe_.InitBuffer(packed_, Tile * 16 * sizeof(half));
-            pipe_.InitBuffer(halfColumns_, HalfPitch * 5 * sizeof(half));
-            pipe_.InitBuffer(pattern_, 32);
-        } else if constexpr (!Reuse) pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
+        if constexpr (!Reuse) pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
         pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
-        if constexpr (!Transposed) pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
+        pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
         auto r = rawIndex_.Get<int32_t>();
         auto p = priorIndex_.Get<int32_t>();
         CreateVecIndex(r, int32_t(0), Tile);
@@ -295,15 +289,6 @@ public:
         PipeBarrier<PIPE_V>();
         Muls(r, r, int32_t(24), Tile);
         Muls(p, p, int32_t(20), Tile);
-        if constexpr (Transposed) {
-            Duplicate(pattern_.Get<uint16_t>(), uint16_t(31), 16);
-            auto hc = halfColumns_.Get<half>();
-            auto temp = packed_.Get<half>();
-            for (uint32_t j = 0; j < 16; ++j) {
-                srcList_[j] = uint64_t(hc[(j < 5 ? j : 0) * HalfPitch].GetPhyAddr());
-                dstList_[j] = uint64_t(temp[j * 16].GetPhyAddr());
-            }
-        } else {
         if constexpr (Reuse) {
             auto seq = columns_.Get<float>();
             auto row = seq[Tile * 5];
@@ -352,7 +337,6 @@ public:
         Muls(mod, mod, 4.0f, Tile * 5);
         PipeBarrier<PIPE_V>();
         Cast(index, mod, RoundMode::CAST_RINT, Tile * 5);
-        }
         }
         Duplicate(ones_.Get<float>(), 1.0f, 64);
         PipeBarrier<PIPE_V>();
@@ -427,19 +411,6 @@ private:
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
             auto dst = outQueue_.AllocTensor<T>();
-            if constexpr (Transposed) {
-                auto hc = halfColumns_.Get<half>();
-                for (uint32_t j = 0; j < 5; ++j)
-                    Cast(hc[j * HalfPitch], c[j * Pitch], RoundMode::CAST_RINT, count);
-                PipeBarrier<PIPE_V>();
-                const uint8_t repeats = uint8_t((count + 15) / 16);
-                TransDataTo5HD<half>(dstList_, srcList_,
-                    TransDataTo5HDParams{false, false, repeats, uint16_t(repeats > 1 ? 16 : 0), uint16_t(repeats > 1 ? 1 : 0)});
-                PipeBarrier<PIPE_V>();
-                uint64_t retained = 0;
-                GatherMask(dst, packed_.Get<half>(), pattern_.Get<uint16_t>(), false, 0,
-                    GatherMaskParams{1, uint16_t(repeats * 2), 8, 0}, retained);
-            } else {
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
             else packed = packed_.Get<float>();
@@ -450,7 +421,6 @@ private:
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
             else if constexpr (!Reuse)
                 DataCopy(dst, packed, ((count * 5 + 7) / 8) * 8);
-            }
             outQueue_.EnQue(dst);
             dst = outQueue_.DeQue<T>();
             DataCopyPad(out_[(b * n_ + start) * 5], dst,
@@ -518,8 +488,7 @@ private:
     TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
     TQue<QuePosition::VECOUT, 1> outQueue_;
     TBuf<TPosition::VECCALC> rawFloat_, columns_, packed_, ones_;
-    TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_, halfColumns_, pattern_;
-    uint64_t srcList_[16], dstList_[16];
+    TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
     uint32_t batch_, n_, cores_, segments_;
