@@ -14,7 +14,7 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        Duplicate(Local<float>(5), 1.0f, Pack == 1 ? 8 : 16);
+        Duplicate(Local<float>(5), 1.0f, ((Pack * 24 + 31) / 32) * 8);
     }
     __aicore__ inline void Process()
     {
@@ -24,12 +24,17 @@ public:
             const uint32_t count = remaining < Pack ? remaining : Pack;
             auto raw = Local<T>(0);
             auto prior = Local<float>(1);
+            if constexpr (Pack == 8) {
+                DataCopy(raw, raw_[i * 6], count * 6);
+                DataCopy(prior, prior_[(i % n_) * 5], count * 5);
+            } else {
             DataCopyPad(raw, raw_[i * 6],
                 DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
                 DataCopyPadExtParams<T>{false, 0, 0, 0});
             DataCopyPad(prior, prior_[(i % n_) * 5],
                 DataCopyExtParams{1, count * 20, 0, 0, 0},
                 DataCopyPadExtParams<float>{false, 0, 0, 0});
+            }
             constexpr uint32_t mv = 0;
             SetFlag<HardEvent::MTE2_V>(mv);
             WaitFlag<HardEvent::MTE2_V>(mv);
@@ -84,8 +89,12 @@ public:
             constexpr uint32_t vm = 0;
             SetFlag<HardEvent::V_MTE3>(vm);
             WaitFlag<HardEvent::V_MTE3>(vm);
+            if constexpr (Pack == 8 && sizeof(T) == 4)
+                DataCopy(out_[i * 5], dst, count * 5);
+            else {
             DataCopyPad(out_[i * 5], dst,
                 DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
+            }
             constexpr uint32_t om = 0;
             SetFlag<HardEvent::MTE3_V>(om);
             WaitFlag<HardEvent::MTE3_V>(om);
@@ -95,7 +104,7 @@ private:
     template <typename U>
     __aicore__ inline LocalTensor<U> Local(uint32_t slot)
     {
-        constexpr uint32_t Bytes = Pack == 1 ? 32 : 64;
+        constexpr uint32_t Bytes = ((Pack * 24 + 31) / 32) * 32;
         const TPosition pos = slot < 2 ? TPosition::VECIN :
             (slot == 2 ? TPosition::VECOUT : TPosition::VECCALC);
         return LocalTensor<U>(pos, slot * Bytes, Bytes / sizeof(U));
@@ -321,11 +330,11 @@ public:
         PipeBarrier<PIPE_V>();
         Sub(mod, seq, mod, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, static_cast<float>(int32_t((CachePrior && sizeof(T) == 2) ? Tile + 16 : Pitch)), Tile * 5);
+        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : (Tile == 768 ? 776.0f : 1032.0f))), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, (CachePrior && sizeof(T) == 2) ? 2.0f : 4.0f, Tile * 5);
+        Muls(mod, mod, 4.0f, Tile * 5);
         PipeBarrier<PIPE_V>();
         Cast(index, mod, RoundMode::CAST_RINT, Tile * 5);
         }
@@ -402,14 +411,6 @@ private:
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
             auto dst = outQueue_.AllocTensor<T>();
-            if constexpr (CachePrior && sizeof(T) == 2) {
-                auto quantized = packed_.Get<T>();
-                for (uint32_t j = 0; j < 5; ++j)
-                    Cast(quantized[j * (Tile + 16)], c[j * Pitch], RoundMode::CAST_RINT, count);
-                PipeBarrier<PIPE_V>();
-                Gather(dst, quantized, packIndex_.Get<uint32_t>(), 0, uint64_t(128),
-                       uint8_t((count * 5 + 127) / 128), 8);
-            } else {
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
             else packed = packed_.Get<float>();
@@ -420,7 +421,6 @@ private:
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
             else if constexpr (!Reuse)
                 DataCopy(dst, packed, ((count * 5 + 7) / 8) * 8);
-            }
             outQueue_.EnQue(dst);
             dst = outQueue_.DeQue<T>();
             DataCopyPad(out_[(b * n_ + start) * 5], dst,
@@ -502,6 +502,10 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
     if constexpr (PATH == 0) {
         SmallCandidateDecode<DT_RAW_PRED, 1> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 5) {
+        SmallCandidateDecode<DT_RAW_PRED, 8> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 3) {
