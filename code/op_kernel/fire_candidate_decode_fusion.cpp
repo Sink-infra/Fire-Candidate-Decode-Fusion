@@ -10,6 +10,7 @@ public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &d)
     {
+        const int64_t initMark = GetSystemCycle();
         n_ = d.candidates; tiles_ = (n_ + Pack - 1) / Pack; total_ = d.batch * tiles_; cores_ = d.cores;
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
@@ -21,6 +22,9 @@ public:
         pipe_.InitBuffer(resultBuf_, Pack == 1 ? 32 : 64);
         pipe_.InitBuffer(oneBuf_, Pack == 1 ? 32 : 64);
         Duplicate(oneBuf_.Get<float>(), 1.0f, Pack == 1 ? 8 : 16);
+        PipeBarrier<PIPE_ALL>();
+        stages_[0] = GetSystemCycle() - initMark;
+        for (uint32_t j = 1; j < 5; ++j) stages_[j] = 0;
     }
     __aicore__ inline void Process()
     {
@@ -28,6 +32,8 @@ public:
             const uint32_t i = (task / tiles_) * n_ + (task % tiles_) * Pack;
             const uint32_t remaining = n_ - (task % tiles_) * Pack;
             const uint32_t count = remaining < Pack ? remaining : Pack;
+            PipeBarrier<PIPE_ALL>();
+            int64_t mark = GetSystemCycle();
             auto raw = inRaw_.Get<T>();
             auto prior = inPrior_.Get<float>();
             DataCopyPad(raw, raw_[i * 6],
@@ -45,6 +51,9 @@ public:
             else
                 DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_ALL>();
+            stages_[1] += GetSystemCycle() - mark;
+            mark = GetSystemCycle();
             Muls(sig, sig, -1.0f, count * 6);
             PipeBarrier<PIPE_V>();
             Exp(sig, sig, count * 6);
@@ -55,6 +64,9 @@ public:
             auto vs = pipe_.FetchEventID(HardEvent::V_S);
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
+            PipeBarrier<PIPE_ALL>();
+            stages_[2] += GetSystemCycle() - mark;
+            mark = GetSystemCycle();
             auto result = resultBuf_.Get<float>();
             for (uint32_t row = 0; row < count; ++row) {
             const float stride = prior.GetValue(row * 5 + 2);
@@ -82,6 +94,9 @@ public:
             auto sv = pipe_.FetchEventID(HardEvent::S_V);
             SetFlag<HardEvent::S_V>(sv);
             WaitFlag<HardEvent::S_V>(sv);
+            PipeBarrier<PIPE_ALL>();
+            stages_[3] += GetSystemCycle() - mark;
+            mark = GetSystemCycle();
             auto dst = outQueue_.Get<T>();
             if constexpr (sizeof(T) == 2)
                 Cast(dst, result, RoundMode::CAST_RINT, count * 5);
@@ -95,9 +110,19 @@ public:
             auto om = pipe_.FetchEventID(HardEvent::MTE3_V);
             SetFlag<HardEvent::MTE3_V>(om);
             WaitFlag<HardEvent::MTE3_V>(om);
+            PipeBarrier<PIPE_ALL>();
+            stages_[4] += GetSystemCycle() - mark;
+            mark = GetSystemCycle();
+
         }
+        PipeBarrier<PIPE_ALL>();
+        const uint32_t task = GetBlockIdx();
+        const uint32_t i = (task / tiles_) * n_ + (task % tiles_) * Pack;
+        for (uint32_t j = 0; j < 5; ++j)
+            out_.SetValue(i * 5 + j, T(float(stages_[j]) * 0.02f));
     }
 private:
+    int64_t stages_[5];
     TPipe pipe_;
     TBuf<TPosition::VECIN> inRaw_, inPrior_;
     TBuf<TPosition::VECOUT> outQueue_;
@@ -111,10 +136,7 @@ private:
 template <typename T, uint32_t Tile, bool Balanced = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
-    static constexpr bool Reuse = Tile >= 768 && sizeof(T) == 4;
-    static constexpr bool Wide = Tile >= 768;
-    static constexpr uint32_t RawElements = Wide ? ((6 * Pitch + 63) / 64) * 64 : Tile;
-    static constexpr uint32_t PriorElements = Wide ? ((5 * Pitch + 63) / 64) * 64 : Tile;
+    static constexpr bool Reuse = Tile == 1024 && sizeof(T) == 4;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
@@ -126,46 +148,23 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(inRaw_, Tile >= 768 ? 2 : 1, Tile * 6 * sizeof(T));
-        pipe_.InitBuffer(inPrior_, Tile >= 768 ? 2 : 1, Tile * 5 * sizeof(float));
+        pipe_.InitBuffer(inRaw_, Tile == 1024 ? 2 : 1, Tile * 6 * sizeof(T));
+        pipe_.InitBuffer(inPrior_, Tile == 1024 ? 2 : 1, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
         if constexpr (!Reuse) pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
-        pipe_.InitBuffer(columns_, (Wide ? ((Pitch * 11 + 63) / 64) * 64 : Pitch * 11) * sizeof(float));
+        pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
         if constexpr (!Reuse) pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
-        pipe_.InitBuffer(rawIndex_, RawElements * sizeof(uint32_t));
-        pipe_.InitBuffer(priorIndex_, PriorElements * sizeof(uint32_t));
+        pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
+        pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
         auto r = rawIndex_.Get<int32_t>();
         auto p = priorIndex_.Get<int32_t>();
-        if constexpr (Wide) {
-            for (uint32_t j = 0; j < 6; ++j) {
-                CreateVecIndex(r[j * Pitch], int32_t(0), Pitch);
-                PipeBarrier<PIPE_V>();
-                Muls(r[j * Pitch], r[j * Pitch], int32_t(24), Pitch);
-                PipeBarrier<PIPE_V>();
-                Adds(r[j * Pitch], r[j * Pitch], int32_t(j * 4), Pitch);
-                PipeBarrier<PIPE_V>();
-                Duplicate(r[j * Pitch + Tile], int32_t(j * 4), 8);
-            }
-            Duplicate(r[6 * Pitch], int32_t(0), RawElements - 6 * Pitch);
-            for (uint32_t j = 0; j < 5; ++j) {
-                CreateVecIndex(p[j * Pitch], int32_t(0), Pitch);
-                PipeBarrier<PIPE_V>();
-                Muls(p[j * Pitch], p[j * Pitch], int32_t(20), Pitch);
-                PipeBarrier<PIPE_V>();
-                Adds(p[j * Pitch], p[j * Pitch], int32_t(j * 4), Pitch);
-                PipeBarrier<PIPE_V>();
-                Duplicate(p[j * Pitch + Tile], int32_t(j * 4), 8);
-            }
-            Duplicate(p[5 * Pitch], int32_t(0), PriorElements - 5 * Pitch);
-        } else {
-            CreateVecIndex(r, int32_t(0), Tile);
-            CreateVecIndex(p, int32_t(0), Tile);
-            PipeBarrier<PIPE_V>();
-            Muls(r, r, int32_t(24), Tile);
-            Muls(p, p, int32_t(20), Tile);
-        }
+        CreateVecIndex(r, int32_t(0), Tile);
+        CreateVecIndex(p, int32_t(0), Tile);
+        PipeBarrier<PIPE_V>();
+        Muls(r, r, int32_t(24), Tile);
+        Muls(p, p, int32_t(20), Tile);
         if constexpr (Reuse) {
             auto seq = columns_.Get<float>();
             auto row = seq[Tile * 5];
@@ -182,7 +181,7 @@ public:
             PipeBarrier<PIPE_V>();
             Sub(seq, seq, row, Tile * 5);
             PipeBarrier<PIPE_V>();
-            Muls(seq, seq, 776.0f, Tile * 5);
+            Muls(seq, seq, 1032.0f, Tile * 5);
             Cast(row, index, RoundMode::CAST_NONE, Tile * 5);
             PipeBarrier<PIPE_V>();
             Add(seq, seq, row, Tile * 5);
@@ -207,7 +206,7 @@ public:
         PipeBarrier<PIPE_V>();
         Sub(mod, seq, mod, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : 776.0f)), Tile * 5);
+        Muls(mod, mod, (Tile == 512 ? 520.0f : (Tile == 576 ? 584.0f : 1032.0f)), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
@@ -222,17 +221,17 @@ public:
     __aicore__ inline void Process()
     {
         const uint32_t tiles = Balanced ? segments_ : (n_ + Tile - 1) / Tile;
-        if constexpr (Tile >= 768) {
+        if constexpr (Tile == 1024) {
             if (GetBlockIdx() < batch_ * tiles) Load(GetBlockIdx(), tiles);
         }
         for (uint32_t task = GetBlockIdx(); task < batch_ * tiles; task += cores_) {
             const uint32_t b = task / tiles;
             const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
             const uint32_t count = Balanced ? n_ * ((task % tiles) + 1) / tiles - start : (start + Tile <= n_ ? Tile : n_ - start);
-            if constexpr (Tile < 768) Load(task, tiles);
+            if constexpr (Tile != 1024) Load(task, tiles);
             auto raw = inRaw_.DeQue<T>();
             auto prior = inPrior_.DeQue<float>();
-            if constexpr (Tile >= 768) {
+            if constexpr (Tile == 1024) {
                 if (task + cores_ < batch_ * tiles) Load(task + cores_, tiles);
             }
             LocalTensor<float> sig;
@@ -258,15 +257,10 @@ public:
             auto c = columns_.Get<float>();
             const auto ri = rawIndex_.Get<uint32_t>();
             const auto pi = priorIndex_.Get<uint32_t>();
-            if constexpr (Wide) {
-                Gather(c, sig, ri, 0, uint64_t(64), uint8_t(RawElements / 64), 8);
-                Gather(c[6 * Pitch], prior, pi, 0, uint64_t(64), uint8_t(PriorElements / 64), 8);
-            } else {
             for (uint32_t j = 0; j < 6; ++j)
                 Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             for (uint32_t j = 0; j < 5; ++j)
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
-            }
             PipeBarrier<PIPE_V>();
             Muls(c, c, 2.0f, Pitch * 4);
             PipeBarrier<PIPE_V>();
@@ -352,7 +346,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 768> op;
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 1024> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     }
