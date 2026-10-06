@@ -263,7 +263,7 @@ public:
 
         }
         PipeBarrier<PIPE_ALL>();
-        const uint32_t tiles = Balanced ? segments_ : (n_ + Tile - 1) / Tile;
+
         const uint32_t task = GetBlockIdx();
         const uint32_t b = task / tiles;
         const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
