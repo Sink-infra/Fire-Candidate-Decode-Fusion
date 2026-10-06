@@ -10,21 +10,12 @@ public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &d)
     {
-        const int64_t initMark = GetSystemCycle();
         n_ = d.candidates; tiles_ = (n_ + Pack - 1) / Pack; total_ = d.batch * tiles_; cores_ = d.cores;
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(inRaw_, Pack == 1 ? 32 : 64);
-        pipe_.InitBuffer(inPrior_, Pack == 1 ? 32 : 64);
-        pipe_.InitBuffer(outQueue_, Pack == 1 ? 32 : 64);
-        pipe_.InitBuffer(sigBuf_, Pack == 1 ? 32 : 64);
-        pipe_.InitBuffer(resultBuf_, Pack == 1 ? 32 : 64);
-        pipe_.InitBuffer(oneBuf_, Pack == 1 ? 32 : 64);
-        Duplicate(oneBuf_.Get<float>(), 1.0f, Pack == 1 ? 8 : 16);
-        PipeBarrier<PIPE_ALL>();
-        stages_[0] = GetSystemCycle() - initMark;
-        for (uint32_t j = 1; j < 5; ++j) stages_[j] = 0;
+        pipe_.InitBuffer(storage_, 6 * (Pack == 1 ? 32 : 64));
+        Duplicate(Local<float>(5), 1.0f, Pack == 1 ? 8 : 16);
     }
     __aicore__ inline void Process()
     {
@@ -32,10 +23,8 @@ public:
             const uint32_t i = (task / tiles_) * n_ + (task % tiles_) * Pack;
             const uint32_t remaining = n_ - (task % tiles_) * Pack;
             const uint32_t count = remaining < Pack ? remaining : Pack;
-            PipeBarrier<PIPE_ALL>();
-            int64_t mark = GetSystemCycle();
-            auto raw = inRaw_.Get<T>();
-            auto prior = inPrior_.Get<float>();
+            auto raw = Local<T>(0);
+            auto prior = Local<float>(1);
             DataCopyPad(raw, raw_[i * 6],
                 DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
                 DataCopyPadExtParams<T>{false, 0, 0, 0});
@@ -45,29 +34,23 @@ public:
             auto mv = pipe_.FetchEventID(HardEvent::MTE2_V);
             SetFlag<HardEvent::MTE2_V>(mv);
             WaitFlag<HardEvent::MTE2_V>(mv);
-            auto sig = sigBuf_.Get<float>();
+            auto sig = Local<float>(3);
             if constexpr (sizeof(T) == 2)
                 Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
             else
                 DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             PipeBarrier<PIPE_V>();
-            PipeBarrier<PIPE_ALL>();
-            stages_[1] += GetSystemCycle() - mark;
-            mark = GetSystemCycle();
             Muls(sig, sig, -1.0f, count * 6);
             PipeBarrier<PIPE_V>();
             Exp(sig, sig, count * 6);
             PipeBarrier<PIPE_V>();
             Adds(sig, sig, 1.0f, count * 6);
             PipeBarrier<PIPE_V>();
-            Div(sig, oneBuf_.Get<float>(), sig, count * 6);
+            Div(sig, Local<float>(5), sig, count * 6);
             auto vs = pipe_.FetchEventID(HardEvent::V_S);
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
-            PipeBarrier<PIPE_ALL>();
-            stages_[2] += GetSystemCycle() - mark;
-            mark = GetSystemCycle();
-            auto result = resultBuf_.Get<float>();
+            auto result = Local<float>(4);
             for (uint32_t row = 0; row < count; ++row) {
             const float stride = prior.GetValue(row * 5 + 2);
             float x = 2.0f * sig.GetValue(row * 6 + 0);
@@ -94,10 +77,7 @@ public:
             auto sv = pipe_.FetchEventID(HardEvent::S_V);
             SetFlag<HardEvent::S_V>(sv);
             WaitFlag<HardEvent::S_V>(sv);
-            PipeBarrier<PIPE_ALL>();
-            stages_[3] += GetSystemCycle() - mark;
-            mark = GetSystemCycle();
-            auto dst = outQueue_.Get<T>();
+            auto dst = Local<T>(2);
             if constexpr (sizeof(T) == 2)
                 Cast(dst, result, RoundMode::CAST_RINT, count * 5);
             else
@@ -110,34 +90,16 @@ public:
             auto om = pipe_.FetchEventID(HardEvent::MTE3_V);
             SetFlag<HardEvent::MTE3_V>(om);
             WaitFlag<HardEvent::MTE3_V>(om);
-            PipeBarrier<PIPE_ALL>();
-            stages_[4] += GetSystemCycle() - mark;
-            mark = GetSystemCycle();
-
         }
-        PipeBarrier<PIPE_ALL>();
-        const uint32_t task = GetBlockIdx();
-        const uint32_t i = (task / tiles_) * n_ + (task % tiles_) * Pack;
-        auto diag = resultBuf_.Get<float>();
-        for (uint32_t j = 0; j < 5; ++j)
-            diag.SetValue(j, float(stages_[j]) * 0.02f);
-        auto sv = pipe_.FetchEventID(HardEvent::S_V);
-        SetFlag<HardEvent::S_V>(sv);
-        WaitFlag<HardEvent::S_V>(sv);
-        auto dst = outQueue_.Get<T>();
-        if constexpr (sizeof(T) == 2) Cast(dst, diag, RoundMode::CAST_RINT, 5);
-        else DataCopy(dst, diag, 8);
-        auto vm = pipe_.FetchEventID(HardEvent::V_MTE3);
-        SetFlag<HardEvent::V_MTE3>(vm);
-        WaitFlag<HardEvent::V_MTE3>(vm);
-        DataCopyPad(out_[i * 5], dst, DataCopyExtParams{1, 5 * uint32_t(sizeof(T)), 0, 0, 0});
     }
 private:
-    int64_t stages_[5];
     TPipe pipe_;
-    TBuf<TPosition::VECIN> inRaw_, inPrior_;
-    TBuf<TPosition::VECOUT> outQueue_;
-    TBuf<TPosition::VECCALC> sigBuf_, resultBuf_, oneBuf_;
+    template <typename U>
+    __aicore__ inline LocalTensor<U> Local(uint32_t slot)
+    {
+        return storage_.Get<U>()[slot * (Pack == 1 ? 32 : 64) / sizeof(U)];
+    }
+    TBuf<TPosition::VECCALC> storage_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
     uint32_t n_, total_, cores_, tiles_;
