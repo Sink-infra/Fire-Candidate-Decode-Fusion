@@ -114,6 +114,7 @@ public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
     {
+        wholeCycles_ = 0; packCycles_ = 0;
         batch_ = data.batch;
         n_ = data.candidates;
         cores_ = data.cores;
@@ -217,6 +218,8 @@ private:
     __aicore__ inline void Compute(LocalTensor<T> raw, LocalTensor<float> prior,
                                   uint32_t b, uint32_t start, uint32_t count)
     {
+        PipeBarrier<PIPE_ALL>();
+        int64_t wholeMark = GetSystemCycle();
             LocalTensor<float> sig;
             if constexpr (Reuse) {
                 sig = raw;
@@ -259,6 +262,8 @@ private:
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_ALL>();
+            int64_t packMark = GetSystemCycle();
             auto dst = outQueue_.AllocTensor<T>();
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
@@ -275,6 +280,9 @@ private:
             DataCopyPad(out_[(b * n_ + start) * 5], dst,
                         DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
             outQueue_.FreeTensor(dst);
+            PipeBarrier<PIPE_ALL>();
+            packCycles_ += GetSystemCycle() - packMark;
+            wholeCycles_ += GetSystemCycle() - wholeMark;
     }
     __aicore__ inline void LoadRaw(uint32_t b, uint32_t start, uint32_t count)
     {
@@ -313,6 +321,19 @@ private:
                 inRaw_.FreeTensor(raw);
             }
         }
+        PipeBarrier<PIPE_ALL>();
+        auto diag = columns_.Get<float>();
+        diag.SetValue(0, float(wholeCycles_) * 0.02f);
+        diag.SetValue(1, float(packCycles_) * 0.02f);
+        auto sv = pipe_.FetchEventID(HardEvent::S_V);
+        SetFlag<HardEvent::S_V>(sv); WaitFlag<HardEvent::S_V>(sv);
+        auto dst = outQueue_.AllocTensor<T>();
+        if constexpr (sizeof(T) == 2) Cast(dst, diag, RoundMode::CAST_RINT, 2);
+        else DataCopy(dst, diag, 8);
+        outQueue_.EnQue(dst); dst = outQueue_.DeQue<T>();
+        DataCopyPad(out_[begin * 5], dst,
+                    DataCopyExtParams{1, 2 * uint32_t(sizeof(T)), 0, 0, 0});
+        outQueue_.FreeTensor(dst);
     }
 
     __aicore__ inline void Load(uint32_t task, uint32_t tiles)
@@ -340,6 +361,7 @@ private:
     TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
+    int64_t wholeCycles_, packCycles_;
     uint32_t batch_, n_, cores_, segments_;
 };
 
