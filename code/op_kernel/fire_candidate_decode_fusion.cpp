@@ -105,21 +105,14 @@ public:
             for (uint32_t j = 0; j < 5; ++j)
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, count);
             PipeBarrier<PIPE_V>();
-            Muls(c, c, 2.0f, count);
-            Muls(c[Pitch], c[Pitch], 2.0f, count);
-            Muls(c[2 * Pitch], c[2 * Pitch], 2.0f, count);
-            Muls(c[3 * Pitch], c[3 * Pitch], 2.0f, count);
+            Muls(c, c, 2.0f, Pitch * 4);
             PipeBarrier<PIPE_V>();
-            Adds(c, c, -0.5f, count);
-            Adds(c[Pitch], c[Pitch], -0.5f, count);
-            Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], count);
-            Mul(c[3 * Pitch], c[3 * Pitch], c[3 * Pitch], count);
+            Adds(c, c, -0.5f, Pitch * 2);
+            Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], Pitch * 2);
             Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);
             PipeBarrier<PIPE_V>();
-            Add(c, c, c[6 * Pitch], count);
-            Add(c[Pitch], c[Pitch], c[7 * Pitch], count);
-            Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], count);
-            Mul(c[3 * Pitch], c[3 * Pitch], c[10 * Pitch], count);
+            Add(c, c, c[6 * Pitch], Pitch * 2);
+            Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], Pitch * 2);
             PipeBarrier<PIPE_V>();
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
