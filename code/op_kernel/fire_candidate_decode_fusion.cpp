@@ -260,8 +260,6 @@ private:
 template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
-    static constexpr bool MaskRaw = CachePrior && Tile == 768;
-    static constexpr uint32_t MaskWords = (Tile * 6 / 64) * 8;
     static constexpr bool Reuse = (Tile == 1024 || CachePrior) && sizeof(T) == 4;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -281,61 +279,16 @@ public:
         pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
         if constexpr (!Reuse) pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
-        if constexpr (MaskRaw) pipe_.InitBuffer(rawMasks_, MaskWords * 6 * sizeof(uint32_t));
-        else pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
+        pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
+        auto r = rawIndex_.Get<int32_t>();
         auto p = priorIndex_.Get<int32_t>();
+        CreateVecIndex(r, int32_t(0), Tile);
         CreateVecIndex(p, int32_t(0), Tile);
-        if constexpr (!MaskRaw) {
-            auto r = rawIndex_.Get<int32_t>();
-            CreateVecIndex(r, int32_t(0), Tile);
-            PipeBarrier<PIPE_V>();
-            Muls(r, r, int32_t(24), Tile);
-        }
         PipeBarrier<PIPE_V>();
+        Muls(r, r, int32_t(24), Tile);
         Muls(p, p, int32_t(20), Tile);
-        if constexpr (MaskRaw) {
-            auto masks = rawMasks_.Get<uint32_t>();
-            uint64_t word0[2] = {1, 0};
-            uint64_t word1[2] = {2, 0};
-            Duplicate(masks[0 * MaskWords + 0], uint32_t(1090785345u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[0 * MaskWords + 0], uint32_t(272696336u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[0 * MaskWords + 8], uint32_t(68174084u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[0 * MaskWords + 8], uint32_t(1090785345u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[0 * MaskWords + 16], uint32_t(272696336u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[0 * MaskWords + 16], uint32_t(68174084u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[1 * MaskWords + 0], uint32_t(2181570690u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[1 * MaskWords + 0], uint32_t(545392672u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[1 * MaskWords + 8], uint32_t(136348168u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[1 * MaskWords + 8], uint32_t(2181570690u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[1 * MaskWords + 16], uint32_t(545392672u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[1 * MaskWords + 16], uint32_t(136348168u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[2 * MaskWords + 0], uint32_t(68174084u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[2 * MaskWords + 0], uint32_t(1090785345u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[2 * MaskWords + 8], uint32_t(272696336u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[2 * MaskWords + 8], uint32_t(68174084u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[2 * MaskWords + 16], uint32_t(1090785345u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[2 * MaskWords + 16], uint32_t(272696336u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[3 * MaskWords + 0], uint32_t(136348168u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[3 * MaskWords + 0], uint32_t(2181570690u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[3 * MaskWords + 8], uint32_t(545392672u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[3 * MaskWords + 8], uint32_t(136348168u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[3 * MaskWords + 16], uint32_t(2181570690u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[3 * MaskWords + 16], uint32_t(545392672u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[4 * MaskWords + 0], uint32_t(272696336u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[4 * MaskWords + 0], uint32_t(68174084u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[4 * MaskWords + 8], uint32_t(1090785345u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[4 * MaskWords + 8], uint32_t(272696336u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[4 * MaskWords + 16], uint32_t(68174084u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[4 * MaskWords + 16], uint32_t(1090785345u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[5 * MaskWords + 0], uint32_t(545392672u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[5 * MaskWords + 0], uint32_t(136348168u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[5 * MaskWords + 8], uint32_t(2181570690u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[5 * MaskWords + 8], uint32_t(545392672u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[5 * MaskWords + 16], uint32_t(136348168u), word0, uint8_t(24), uint16_t(1), uint8_t(3));
-            Duplicate(masks[5 * MaskWords + 16], uint32_t(2181570690u), word1, uint8_t(24), uint16_t(1), uint8_t(3));
-        }
         if constexpr (Reuse) {
             auto seq = columns_.Get<float>();
             auto row = seq[Tile * 5];
@@ -436,18 +389,10 @@ private:
                 uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
             PipeBarrier<PIPE_V>();
             auto c = columns_.Get<float>();
+            const auto ri = rawIndex_.Get<uint32_t>();
             const auto pi = priorIndex_.Get<uint32_t>();
-            if constexpr (MaskRaw) {
-                for (uint32_t j = 0; j < 6; ++j) {
-                    uint64_t retained = 0;
-                    GatherMask(c[j * Pitch], sig, rawMasks_.Get<uint32_t>()[j * MaskWords], false, 0,
-                        GatherMaskParams{1, uint16_t((count * 6 + 63) / 64), 8, 1}, retained);
-                }
-            } else {
-                const auto ri = rawIndex_.Get<uint32_t>();
-                for (uint32_t j = 0; j < 6; ++j)
-                    Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
-            }
+            for (uint32_t j = 0; j < 6; ++j)
+                Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             if constexpr (!CachePrior) {
             for (uint32_t j = 0; j < 5; ++j)
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
@@ -543,7 +488,7 @@ private:
     TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
     TQue<QuePosition::VECOUT, 1> outQueue_;
     TBuf<TPosition::VECCALC> rawFloat_, columns_, packed_, ones_;
-    TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_, rawMasks_;
+    TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
     uint32_t batch_, n_, cores_, segments_;
