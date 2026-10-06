@@ -115,113 +115,6 @@ private:
 };
 
 
-template <typename T>
-class SmallVectorScalarPack {
-    static constexpr uint32_t Pack = 16;
-    static constexpr uint32_t Pitch = 24;
-    template<typename U>
-    __aicore__ inline LocalTensor<U> At(TPosition pos, uint32_t address, uint32_t count)
-    {
-        return LocalTensor<U>(pos, address, count);
-    }
-public:
-    __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
-                               const FireCandidateDecodeFusionTilingData &d)
-    {
-        n_ = d.candidates; tiles_ = (n_ + Pack - 1) / Pack; total_ = d.batch * tiles_; cores_ = d.cores;
-        raw_.SetGlobalBuffer((__gm__ T *)raw);
-        prior_.SetGlobalBuffer((__gm__ float *)prior);
-        out_.SetGlobalBuffer((__gm__ T *)out);
-        auto ri = At<uint32_t>(TPosition::VECCALC, 4096, Pack);
-        auto pi = At<uint32_t>(TPosition::VECCALC, 4352, Pack);
-        for (uint32_t i = 0; i < Pack; ++i) {
-            ri.SetValue(i, i * 24);
-            pi.SetValue(i, i * 20);
-        }
-        SetFlag<HardEvent::S_V>(0);
-        WaitFlag<HardEvent::S_V>(0);
-        Duplicate(At<float>(TPosition::VECCALC, 5120, 128), 1.0f, 128);
-    }
-    __aicore__ inline void Process()
-    {
-        for (uint32_t task = GetBlockIdx(); task < total_; task += cores_) {
-            const uint32_t start = (task % tiles_) * Pack;
-            const uint32_t i = (task / tiles_) * n_ + start;
-            const uint32_t count = start + Pack <= n_ ? Pack : n_ - start;
-            auto raw = At<T>(TPosition::VECIN, 0, 512 / sizeof(T));
-            auto prior = At<float>(TPosition::VECIN, 512, 128);
-            DataCopyPad(raw, raw_[i * 6],
-                DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
-                DataCopyPadExtParams<T>{false, 0, 0, 0});
-            DataCopyPad(prior, prior_[start * 5],
-                DataCopyExtParams{1, count * 20, 0, 0, 0},
-                DataCopyPadExtParams<float>{false, 0, 0, 0});
-            SetFlag<HardEvent::MTE2_V>(0);
-            WaitFlag<HardEvent::MTE2_V>(0);
-            auto sig = At<float>(TPosition::VECCALC, 1536, 128);
-            if constexpr (sizeof(T) == 2) Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
-            else sig = raw;
-            PipeBarrier<PIPE_V>();
-            Muls(sig, sig, -1.0f, count * 6);
-            PipeBarrier<PIPE_V>();
-            Exp(sig, sig, count * 6);
-            PipeBarrier<PIPE_V>();
-            Adds(sig, sig, 1.0f, count * 6);
-            PipeBarrier<PIPE_V>();
-            Div(sig, At<float>(TPosition::VECCALC, 5120, 128), sig, count * 6);
-            PipeBarrier<PIPE_V>();
-            auto c = At<float>(TPosition::VECCALC, 2048, 11 * Pitch);
-            auto ri = At<uint32_t>(TPosition::VECCALC, 4096, 64);
-            auto pi = At<uint32_t>(TPosition::VECCALC, 4352, 64);
-            for (uint32_t j = 0; j < 6; ++j)
-                Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(count), uint8_t(1), 8);
-            for (uint32_t j = 0; j < 5; ++j)
-                Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(count), uint8_t(1), 8);
-            PipeBarrier<PIPE_V>();
-            Muls(c, c, 2.0f, Pitch * 4);
-            PipeBarrier<PIPE_V>();
-            Adds(c, c, -0.5f, Pitch * 2);
-            Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], Pitch * 2);
-            Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);
-            PipeBarrier<PIPE_V>();
-            Add(c, c, c[6 * Pitch], Pitch * 2);
-            Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], Pitch * 2);
-            PipeBarrier<PIPE_V>();
-            for (uint32_t j = 0; j < 4; ++j)
-                Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
-            PipeBarrier<PIPE_V>();
-            SetFlag<HardEvent::V_S>(0);
-            WaitFlag<HardEvent::V_S>(0);
-            auto bits = c.template ReinterpretCast<uint32_t>();
-            auto packed = At<uint32_t>(sizeof(T) == 4 ? TPosition::VECOUT : TPosition::VECCALC,
-                                      sizeof(T) == 4 ? 1024 : 1536, 128);
-            for (uint32_t row = 0; row < count; ++row)
-                for (uint32_t field = 0; field < 5; ++field)
-                    packed.SetValue(row * 5 + field, bits.GetValue(field * Pitch + row));
-            auto dst = At<T>(TPosition::VECOUT, 1024, 512 / sizeof(T));
-            if constexpr (sizeof(T) == 2) {
-                SetFlag<HardEvent::S_V>(0);
-                WaitFlag<HardEvent::S_V>(0);
-                Cast(dst, packed.template ReinterpretCast<float>(), RoundMode::CAST_RINT, count * 5);
-                SetFlag<HardEvent::V_MTE3>(0);
-                WaitFlag<HardEvent::V_MTE3>(0);
-            } else {
-                SetFlag<HardEvent::S_MTE3>(0);
-                WaitFlag<HardEvent::S_MTE3>(0);
-            }
-            DataCopyPad(out_[i * 5], dst,
-                DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
-            SetFlag<HardEvent::MTE3_V>(0);
-            WaitFlag<HardEvent::MTE3_V>(0);
-        }
-    }
-private:
-    GlobalTensor<T> raw_, out_;
-    GlobalTensor<float> prior_;
-    uint32_t n_, tiles_, total_, cores_;
-};
-
-
 template <typename T, uint32_t Tile, bool Balanced = false>
 class MediumCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
@@ -577,11 +470,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 8) {
-        SmallVectorScalarPack<DT_RAW_PRED> op;
-        op.Init(raw_pred, priors, decoded, data);
-        op.Process();
-    } else if constexpr (PATH == 0) {
+    if constexpr (PATH == 0) {
         SmallCandidateDecode<DT_RAW_PRED, 1> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
