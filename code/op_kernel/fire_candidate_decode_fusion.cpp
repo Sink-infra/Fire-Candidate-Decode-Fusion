@@ -398,6 +398,28 @@ private:
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             }
             PipeBarrier<PIPE_V>();
+            if constexpr (CachePrior) {
+                SetMaskCount();
+                SetVectorMask<float, MaskMode::COUNTER>(0, Pitch * 4);
+                Muls<float, false>(c, c, 2.0f, MASK_PLACEHOLDER, uint8_t(1), {1, 1, 8, 8});
+                PipeBarrier<PIPE_V>();
+                SetVectorMask<float, MaskMode::COUNTER>(0, Pitch * 2);
+                Adds<float, false>(c, c, -0.5f, MASK_PLACEHOLDER, uint8_t(1), {1, 1, 8, 8});
+                Mul<float, false>(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], MASK_PLACEHOLDER, uint8_t(1), {1, 1, 1, 8, 8, 8});
+                SetVectorMask<float, MaskMode::COUNTER>(0, count);
+                Mul<float, false>(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], MASK_PLACEHOLDER, uint8_t(1), {1, 1, 1, 8, 8, 8});
+                PipeBarrier<PIPE_V>();
+                SetVectorMask<float, MaskMode::COUNTER>(0, Pitch * 2);
+                Add<float, false>(c, c, c[6 * Pitch], MASK_PLACEHOLDER, uint8_t(1), {1, 1, 1, 8, 8, 8});
+                Mul<float, false>(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], MASK_PLACEHOLDER, uint8_t(1), {1, 1, 1, 8, 8, 8});
+                PipeBarrier<PIPE_V>();
+                SetVectorMask<float, MaskMode::COUNTER>(0, count);
+                for (uint32_t j = 0; j < 4; ++j)
+                    Mul<float, false>(c[j * Pitch], c[j * Pitch], c[8 * Pitch], MASK_PLACEHOLDER, uint8_t(1), {1, 1, 1, 8, 8, 8});
+                SetMaskNorm();
+                ResetMask();
+                PipeBarrier<PIPE_V>();
+            } else {
             Muls(c, c, 2.0f, Pitch * 4);
             PipeBarrier<PIPE_V>();
             Adds(c, c, -0.5f, Pitch * 2);
@@ -410,6 +432,7 @@ private:
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
+            }
             auto dst = outQueue_.AllocTensor<T>();
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
