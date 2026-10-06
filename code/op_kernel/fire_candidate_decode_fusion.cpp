@@ -6,7 +6,7 @@ using namespace AscendC;
 
 template <typename T>
 class KernelFireCandidateDecodeFusion {
-    static constexpr uint32_t Tile = 512;
+    static constexpr uint32_t Tile = 1024;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
@@ -23,11 +23,10 @@ public:
         pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
         pipe_.InitBuffer(columns_, Tile * 11 * sizeof(float));
         pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
-        pipe_.InitBuffer(ones_, Tile * 6 * sizeof(float));
+        pipe_.InitBuffer(ones_, 64 * sizeof(float));
         pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
-        pipe_.InitBuffer(indexScratch_, Tile * 15 * sizeof(float));
         auto r = rawIndex_.Get<int32_t>();
         auto p = priorIndex_.Get<int32_t>();
         CreateVecIndex(r, int32_t(0), Tile);
@@ -35,10 +34,9 @@ public:
         PipeBarrier<PIPE_V>();
         Muls(r, r, int32_t(24), Tile);
         Muls(p, p, int32_t(20), Tile);
-        auto scratch = indexScratch_.Get<float>();
-        auto seq = scratch;
-        auto row = scratch[Tile * 5];
-        auto mod = scratch[Tile * 10];
+        auto seq = packed_.Get<float>();
+        auto row = rawFloat_.Get<float>();
+        auto mod = columns_.Get<float>();
         auto index = packIndex_.Get<int32_t>();
         CreateVecIndex(seq, 0.0f, Tile * 5);
         PipeBarrier<PIPE_V>();
@@ -52,14 +50,14 @@ public:
         PipeBarrier<PIPE_V>();
         Sub(mod, seq, mod, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, 512.0f, Tile * 5);
+        Muls(mod, mod, 1024.0f, Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
         Muls(mod, mod, 4.0f, Tile * 5);
         PipeBarrier<PIPE_V>();
         Cast(index, mod, RoundMode::CAST_RINT, Tile * 5);
-        Duplicate(ones_.Get<float>(), 1.0f, Tile * 6);
+        Duplicate(ones_.Get<float>(), 1.0f, 64);
         PipeBarrier<PIPE_V>();
     }
 
@@ -95,7 +93,8 @@ public:
             PipeBarrier<PIPE_V>();
             Adds(sig, sig, 1.0f, count * 6);
             PipeBarrier<PIPE_V>();
-            Div(sig, ones_.Get<float>(), sig, count * 6);
+            Div(sig, ones_.Get<float>(), sig, uint64_t(64),
+                uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
             PipeBarrier<PIPE_V>();
             auto c = columns_.Get<float>();
             const auto ri = rawIndex_.Get<uint32_t>();
@@ -147,7 +146,7 @@ private:
     TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
     TQue<QuePosition::VECOUT, 1> outQueue_;
     TBuf<TPosition::VECCALC> rawFloat_, columns_, packed_, ones_;
-    TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_, indexScratch_;
+    TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
     uint32_t batch_, n_, cores_;
