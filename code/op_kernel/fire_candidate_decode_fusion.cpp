@@ -4,7 +4,7 @@
 
 using namespace AscendC;
 
-template <typename T, uint32_t Pack>
+template <typename T, uint32_t Pack, bool ScalarPrior = false>
 class SmallCandidateDecode {
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -31,9 +31,19 @@ public:
             DataCopyPad(raw, raw_[i * 6],
                 DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
                 DataCopyPadExtParams<T>{false, 0, 0, 0});
+            if constexpr (!ScalarPrior) {
             DataCopyPad(prior, prior_[(i % n_) * 5],
                 DataCopyExtParams{1, count * 20, 0, 0, 0},
                 DataCopyPadExtParams<float>{false, 0, 0, 0});
+            }
+            }
+            float priorValues[Pack * 5];
+            if constexpr (ScalarPrior) {
+                const uint32_t offset = (i % n_) * 5;
+                DataCacheCleanAndInvalid<float, CacheLine::SINGLE_CACHE_LINE>(prior_[offset]);
+                DataCacheCleanAndInvalid<float, CacheLine::SINGLE_CACHE_LINE>(prior_[offset + count * 5 - 1]);
+                for (uint32_t q = 0; q < count * 5; ++q)
+                    priorValues[q] = prior_.GetValue(offset + q);
             }
             constexpr uint32_t mv = 0;
             SetFlag<HardEvent::MTE2_V>(mv);
@@ -56,22 +66,22 @@ public:
             WaitFlag<HardEvent::V_S>(vs);
             auto result = Local<float>(4);
             for (uint32_t row = 0; row < count; ++row) {
-            const float stride = prior.GetValue(row * 5 + 2);
+            const float stride = (ScalarPrior ? priorValues[row * 5 + 2] : prior.GetValue(row * 5 + 2));
             float x = 2.0f * sig.GetValue(row * 6 + 0);
             x = x - 0.5f;
-            x = x + prior.GetValue(row * 5 + 0);
+            x = x + (ScalarPrior ? priorValues[row * 5 + 0] : prior.GetValue(row * 5 + 0));
             x = x * stride;
             float y = 2.0f * sig.GetValue(row * 6 + 1);
             y = y - 0.5f;
-            y = y + prior.GetValue(row * 5 + 1);
+            y = y + (ScalarPrior ? priorValues[row * 5 + 1] : prior.GetValue(row * 5 + 1));
             y = y * stride;
             float w = 2.0f * sig.GetValue(row * 6 + 2);
             w = w * w;
-            w = w * prior.GetValue(row * 5 + 3);
+            w = w * (ScalarPrior ? priorValues[row * 5 + 3] : prior.GetValue(row * 5 + 3));
             w = w * stride;
             float h = 2.0f * sig.GetValue(row * 6 + 3);
             h = h * h;
-            h = h * prior.GetValue(row * 5 + 4);
+            h = h * (ScalarPrior ? priorValues[row * 5 + 4] : prior.GetValue(row * 5 + 4));
             h = h * stride;
             const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
             result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
@@ -501,7 +511,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
     if constexpr (PATH == 0) {
-        SmallCandidateDecode<DT_RAW_PRED, 1> op;
+        SmallCandidateDecode<DT_RAW_PRED, 1, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 5) {
@@ -509,7 +519,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 3) {
-        SmallCandidateDecode<DT_RAW_PRED, 2> op;
+        SmallCandidateDecode<DT_RAW_PRED, 2, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 6) {
