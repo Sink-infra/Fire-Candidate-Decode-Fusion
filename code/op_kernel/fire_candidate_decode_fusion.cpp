@@ -123,8 +123,8 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(inRaw_, 1, Tile * 6 * sizeof(T));
-        pipe_.InitBuffer(inPrior_, 1, Tile * 5 * sizeof(float));
+        pipe_.InitBuffer(inRaw_, Tile == 1024 ? 2 : 1, Tile * 6 * sizeof(T));
+        pipe_.InitBuffer(inPrior_, Tile == 1024 ? 2 : 1, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
         if constexpr (!Reuse) pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
         pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
@@ -196,22 +196,19 @@ public:
     __aicore__ inline void Process()
     {
         const uint32_t tiles = Balanced ? segments_ : (n_ + Tile - 1) / Tile;
+        if constexpr (Tile == 1024) {
+            if (GetBlockIdx() < batch_ * tiles) Load(GetBlockIdx(), tiles);
+        }
         for (uint32_t task = GetBlockIdx(); task < batch_ * tiles; task += cores_) {
             const uint32_t b = task / tiles;
             const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
             const uint32_t count = Balanced ? n_ * ((task % tiles) + 1) / tiles - start : (start + Tile <= n_ ? Tile : n_ - start);
-            auto raw = inRaw_.AllocTensor<T>();
-            auto prior = inPrior_.AllocTensor<float>();
-            DataCopyPad(raw, raw_[(b * n_ + start) * 6],
-                        DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
-                        DataCopyPadExtParams<T>{false, 0, 0, 0});
-            DataCopyPad(prior, prior_[start * 5],
-                        DataCopyExtParams{1, count * 20, 0, 0, 0},
-                        DataCopyPadExtParams<float>{false, 0, 0, 0});
-            inRaw_.EnQue(raw);
-            inPrior_.EnQue(prior);
-            raw = inRaw_.DeQue<T>();
-            prior = inPrior_.DeQue<float>();
+            if constexpr (Tile != 1024) Load(task, tiles);
+            auto raw = inRaw_.DeQue<T>();
+            auto prior = inPrior_.DeQue<float>();
+            if constexpr (Tile == 1024) {
+                if (task + cores_ < batch_ * tiles) Load(task + cores_, tiles);
+            }
             LocalTensor<float> sig;
             if constexpr (Reuse) {
                 sig = raw;
@@ -273,6 +270,24 @@ public:
         }
     }
 private:
+    __aicore__ inline void Load(uint32_t task, uint32_t tiles)
+    {
+        const uint32_t b = task / tiles;
+        const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
+        const uint32_t count = Balanced ? n_ * ((task % tiles) + 1) / tiles - start :
+            (start + Tile <= n_ ? Tile : n_ - start);
+        auto raw = inRaw_.AllocTensor<T>();
+        auto prior = inPrior_.AllocTensor<float>();
+        DataCopyPad(raw, raw_[(b * n_ + start) * 6],
+            DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
+            DataCopyPadExtParams<T>{false, 0, 0, 0});
+        DataCopyPad(prior, prior_[start * 5],
+            DataCopyExtParams{1, count * 20, 0, 0, 0},
+            DataCopyPadExtParams<float>{false, 0, 0, 0});
+        inRaw_.EnQue(raw);
+        inPrior_.EnQue(prior);
+    }
+
     TPipe pipe_;
     TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
     TQue<QuePosition::VECOUT, 1> outQueue_;
