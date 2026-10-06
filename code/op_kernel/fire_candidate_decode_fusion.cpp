@@ -112,6 +112,9 @@ template <typename T, uint32_t Tile, bool Balanced = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
     static constexpr bool Reuse = Tile >= 768 && sizeof(T) == 4;
+    static constexpr bool Wide = Tile >= 768;
+    static constexpr uint32_t RawElements = Wide ? ((6 * Pitch + 63) / 64) * 64 : Tile;
+    static constexpr uint32_t PriorElements = Wide ? ((5 * Pitch + 63) / 64) * 64 : Tile;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
@@ -127,19 +130,42 @@ public:
         pipe_.InitBuffer(inPrior_, Tile >= 768 ? 2 : 1, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
         if constexpr (!Reuse) pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
-        pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
+        pipe_.InitBuffer(columns_, (Wide ? ((Pitch * 11 + 63) / 64) * 64 : Pitch * 11) * sizeof(float));
         if constexpr (!Reuse) pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
-        pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
-        pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
+        pipe_.InitBuffer(rawIndex_, RawElements * sizeof(uint32_t));
+        pipe_.InitBuffer(priorIndex_, PriorElements * sizeof(uint32_t));
         pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
         auto r = rawIndex_.Get<int32_t>();
         auto p = priorIndex_.Get<int32_t>();
-        CreateVecIndex(r, int32_t(0), Tile);
-        CreateVecIndex(p, int32_t(0), Tile);
-        PipeBarrier<PIPE_V>();
-        Muls(r, r, int32_t(24), Tile);
-        Muls(p, p, int32_t(20), Tile);
+        if constexpr (Wide) {
+            for (uint32_t j = 0; j < 6; ++j) {
+                CreateVecIndex(r[j * Pitch], int32_t(0), Pitch);
+                PipeBarrier<PIPE_V>();
+                Muls(r[j * Pitch], r[j * Pitch], int32_t(24), Pitch);
+                PipeBarrier<PIPE_V>();
+                Adds(r[j * Pitch], r[j * Pitch], int32_t(j * 4), Pitch);
+                PipeBarrier<PIPE_V>();
+                Duplicate(r[j * Pitch + Tile], int32_t(j * 4), 8);
+            }
+            Duplicate(r[6 * Pitch], int32_t(0), RawElements - 6 * Pitch);
+            for (uint32_t j = 0; j < 5; ++j) {
+                CreateVecIndex(p[j * Pitch], int32_t(0), Pitch);
+                PipeBarrier<PIPE_V>();
+                Muls(p[j * Pitch], p[j * Pitch], int32_t(20), Pitch);
+                PipeBarrier<PIPE_V>();
+                Adds(p[j * Pitch], p[j * Pitch], int32_t(j * 4), Pitch);
+                PipeBarrier<PIPE_V>();
+                Duplicate(p[j * Pitch + Tile], int32_t(j * 4), 8);
+            }
+            Duplicate(p[5 * Pitch], int32_t(0), PriorElements - 5 * Pitch);
+        } else {
+            CreateVecIndex(r, int32_t(0), Tile);
+            CreateVecIndex(p, int32_t(0), Tile);
+            PipeBarrier<PIPE_V>();
+            Muls(r, r, int32_t(24), Tile);
+            Muls(p, p, int32_t(20), Tile);
+        }
         if constexpr (Reuse) {
             auto seq = columns_.Get<float>();
             auto row = seq[Tile * 5];
@@ -232,10 +258,15 @@ public:
             auto c = columns_.Get<float>();
             const auto ri = rawIndex_.Get<uint32_t>();
             const auto pi = priorIndex_.Get<uint32_t>();
+            if constexpr (Wide) {
+                Gather(c, sig, ri, 0, uint64_t(64), uint8_t(RawElements / 64), 8);
+                Gather(c[6 * Pitch], prior, pi, 0, uint64_t(64), uint8_t(PriorElements / 64), 8);
+            } else {
             for (uint32_t j = 0; j < 6; ++j)
                 Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             for (uint32_t j = 0; j < 5; ++j)
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
+            }
             PipeBarrier<PIPE_V>();
             Muls(c, c, 2.0f, Pitch * 4);
             PipeBarrier<PIPE_V>();
