@@ -54,7 +54,7 @@ public:
             constexpr uint32_t vs = 0;
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
-            auto result = Local<float>(sizeof(T) == 4 ? 2 : 4);
+            auto result = Local<float>(4);
             for (uint32_t row = 0; row < count; ++row) {
             const float stride = prior.GetValue(row * 5 + 2);
             float x = 2.0f * sig.GetValue(row * 6 + 0);
@@ -78,20 +78,17 @@ public:
             result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
             result.SetValue(row * 5 + 4, score);
             }
+            constexpr uint32_t sv = 0;
+            SetFlag<HardEvent::S_V>(sv);
+            WaitFlag<HardEvent::S_V>(sv);
             auto dst = Local<T>(2);
-            if constexpr (sizeof(T) == 2) {
-                constexpr uint32_t sv = 0;
-                SetFlag<HardEvent::S_V>(sv);
-                WaitFlag<HardEvent::S_V>(sv);
+            if constexpr (sizeof(T) == 2)
                 Cast(dst, result, RoundMode::CAST_RINT, count * 5);
-                constexpr uint32_t vm = 0;
-                SetFlag<HardEvent::V_MTE3>(vm);
-                WaitFlag<HardEvent::V_MTE3>(vm);
-            } else {
-                constexpr uint32_t sm = 0;
-                SetFlag<HardEvent::S_MTE3>(sm);
-                WaitFlag<HardEvent::S_MTE3>(sm);
-            }
+            else
+                DataCopy(dst, result, ((count * 5 + 7) / 8) * 8);
+            constexpr uint32_t vm = 0;
+            SetFlag<HardEvent::V_MTE3>(vm);
+            WaitFlag<HardEvent::V_MTE3>(vm);
             if constexpr (Pack == 8 && sizeof(T) == 4)
                 DataCopy(out_[i * 5], dst, count * 5);
             else {
