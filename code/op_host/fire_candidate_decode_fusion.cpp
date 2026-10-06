@@ -64,6 +64,12 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         const uint32_t span = ((groups + cores - 1) / cores) * 8;
         PATH = span <= 768 ? 6 : 7;
     }
+    if (total <= 128 && data->candidates % 16 == 0) {
+        PATH = 8;
+        cores = platform.GetCoreNumAiv();
+        const uint32_t tasks = total / 16;
+        if (cores > tasks) cores = tasks;
+    }
     data->cores = cores;
     context->SetBlockDim(cores);
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
