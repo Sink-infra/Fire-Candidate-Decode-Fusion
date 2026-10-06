@@ -484,16 +484,17 @@ public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &d, TPipe *pipe)
     {
+        pipe_ = pipe;
         batch_ = d.batch; n_ = d.candidates; cores_ = d.cores;
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
         for (uint32_t j = 0; j < 2; ++j) {
-            rawReady_[j] = pipe->AllocEventID(HardEvent::MTE2_V);
-            rawFree_[j] = pipe->AllocEventID(HardEvent::V_MTE2);
+            rawReady_[j] = pipe->AllocEventID<HardEvent::MTE2_V>();
+            rawFree_[j] = pipe->AllocEventID<HardEvent::V_MTE2>();
         }
-        priorReady_ = pipe->AllocEventID(HardEvent::MTE2_V);
-        priorFree_ = pipe->AllocEventID(HardEvent::V_MTE2);
+        priorReady_ = pipe->AllocEventID<HardEvent::MTE2_V>();
+        priorFree_ = pipe->AllocEventID<HardEvent::V_MTE2>();
         outReady_ = pipe->FetchEventID(HardEvent::V_MTE3);
         outFree_ = pipe->FetchEventID(HardEvent::MTE3_V);
         auto ri = At<int32_t>(RawIdxAddr, Tile);
@@ -558,8 +559,13 @@ public:
         }
         if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
         if (priorUsed_) WaitFlag<HardEvent::V_MTE2>(priorFree_);
-        for (uint32_t j = 0; j < 2; ++j)
+        for (uint32_t j = 0; j < 2; ++j) {
             if (rawUsed_[j]) WaitFlag<HardEvent::V_MTE2>(rawFree_[j]);
+            pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_[j]);
+            pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_[j]);
+        }
+        pipe_->ReleaseEventID<HardEvent::MTE2_V>(priorReady_);
+        pipe_->ReleaseEventID<HardEvent::V_MTE2>(priorFree_);
     }
 private:
     template <typename U>
@@ -643,6 +649,7 @@ private:
             outPending_ = true;
     }
 
+    TPipe *pipe_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
     uint32_t batch_, n_, cores_;
