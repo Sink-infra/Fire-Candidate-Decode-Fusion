@@ -62,7 +62,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         const uint32_t groups = (data->candidates + 7) / 8;
         if (cores > groups) cores = groups;
         const uint32_t span = ((groups + cores - 1) / cores) * 8;
-        PATH = span <= 704 ? 6 : 7;
+        PATH = span <= 768 ? 6 : 7;
     }
     data->cores = cores;
     context->SetBlockDim(cores);
