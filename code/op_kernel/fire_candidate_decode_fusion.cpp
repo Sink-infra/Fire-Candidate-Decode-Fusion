@@ -111,6 +111,7 @@ private:
 template <typename T, uint32_t Tile, bool Balanced = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
+    static constexpr bool Reuse = Tile == 1024 && sizeof(T) == 4;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
@@ -122,12 +123,12 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(inRaw_, Tile == 1024 ? 2 : 1, Tile * 6 * sizeof(T));
-        pipe_.InitBuffer(inPrior_, Tile == 1024 ? 2 : 1, Tile * 5 * sizeof(float));
+        pipe_.InitBuffer(inRaw_, 1, Tile * 6 * sizeof(T));
+        pipe_.InitBuffer(inPrior_, 1, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
-        pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
+        if constexpr (!Reuse) pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
         pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
-        pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
+        if constexpr (!Reuse) pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
         pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
@@ -139,6 +140,31 @@ public:
         PipeBarrier<PIPE_V>();
         Muls(r, r, int32_t(24), Tile);
         Muls(p, p, int32_t(20), Tile);
+        if constexpr (Reuse) {
+            auto seq = columns_.Get<float>();
+            auto row = seq[Tile * 5];
+            auto index = packIndex_.Get<int32_t>();
+            CreateVecIndex(seq, 0.0f, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Muls(row, seq, 0.2f, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Cast(index, row, RoundMode::CAST_FLOOR, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Cast(row, index, RoundMode::CAST_NONE, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Muls(row, row, 5.0f, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Sub(seq, seq, row, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Muls(seq, seq, 1032.0f, Tile * 5);
+            Cast(row, index, RoundMode::CAST_NONE, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Add(seq, seq, row, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Muls(seq, seq, 4.0f, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Cast(index, seq, RoundMode::CAST_RINT, Tile * 5);
+        } else {
         auto seq = packed_.Get<float>();
         auto row = rawFloat_.Get<float>();
         auto mod = columns_.Get<float>();
@@ -162,6 +188,7 @@ public:
         Muls(mod, mod, 4.0f, Tile * 5);
         PipeBarrier<PIPE_V>();
         Cast(index, mod, RoundMode::CAST_RINT, Tile * 5);
+        }
         Duplicate(ones_.Get<float>(), 1.0f, 64);
         PipeBarrier<PIPE_V>();
     }
@@ -169,24 +196,31 @@ public:
     __aicore__ inline void Process()
     {
         const uint32_t tiles = Balanced ? segments_ : (n_ + Tile - 1) / Tile;
-        if constexpr (Tile == 1024) {
-            if (GetBlockIdx() < batch_ * tiles) Load(GetBlockIdx(), tiles);
-        }
         for (uint32_t task = GetBlockIdx(); task < batch_ * tiles; task += cores_) {
             const uint32_t b = task / tiles;
             const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
             const uint32_t count = Balanced ? n_ * ((task % tiles) + 1) / tiles - start : (start + Tile <= n_ ? Tile : n_ - start);
-            if constexpr (Tile != 1024) Load(task, tiles);
-            auto raw = inRaw_.DeQue<T>();
-            auto prior = inPrior_.DeQue<float>();
-            if constexpr (Tile == 1024) {
-                if (task + cores_ < batch_ * tiles) Load(task + cores_, tiles);
-            }
-            auto sig = rawFloat_.Get<float>();
-            if constexpr (sizeof(T) == 2) {
-                Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
+            auto raw = inRaw_.AllocTensor<T>();
+            auto prior = inPrior_.AllocTensor<float>();
+            DataCopyPad(raw, raw_[(b * n_ + start) * 6],
+                        DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
+                        DataCopyPadExtParams<T>{false, 0, 0, 0});
+            DataCopyPad(prior, prior_[start * 5],
+                        DataCopyExtParams{1, count * 20, 0, 0, 0},
+                        DataCopyPadExtParams<float>{false, 0, 0, 0});
+            inRaw_.EnQue(raw);
+            inPrior_.EnQue(prior);
+            raw = inRaw_.DeQue<T>();
+            prior = inPrior_.DeQue<float>();
+            LocalTensor<float> sig;
+            if constexpr (Reuse) {
+                sig = raw;
             } else {
-                DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
+                sig = rawFloat_.Get<float>();
+                if constexpr (sizeof(T) == 2)
+                    Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
+                else
+                    DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             }
             PipeBarrier<PIPE_V>();
             Muls(sig, sig, -1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
@@ -218,15 +252,17 @@ public:
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
-            auto packed = packed_.Get<float>();
-            Gather(packed, c, packIndex_.Get<uint32_t>(), 0, uint64_t(64), uint8_t((count * 5 + 63) / 64), 8);
-            PipeBarrier<PIPE_V>();
             auto dst = outQueue_.AllocTensor<T>();
-            if constexpr (sizeof(T) == 2) {
+            LocalTensor<float> packed;
+            if constexpr (Reuse) packed = dst;
+            else packed = packed_.Get<float>();
+            Gather(packed, c, packIndex_.Get<uint32_t>(), 0, uint64_t(64),
+                uint8_t((count * 5 + 63) / 64), 8);
+            PipeBarrier<PIPE_V>();
+            if constexpr (sizeof(T) == 2)
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
-            } else {
+            else if constexpr (!Reuse)
                 DataCopy(dst, packed, ((count * 5 + 7) / 8) * 8);
-            }
             outQueue_.EnQue(dst);
             dst = outQueue_.DeQue<T>();
             DataCopyPad(out_[(b * n_ + start) * 5], dst,
@@ -237,24 +273,6 @@ public:
         }
     }
 private:
-    __aicore__ inline void Load(uint32_t task, uint32_t tiles)
-    {
-        const uint32_t b = task / tiles;
-        const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
-        const uint32_t count = Balanced ? n_ * ((task % tiles) + 1) / tiles - start :
-            (start + Tile <= n_ ? Tile : n_ - start);
-        auto raw = inRaw_.AllocTensor<T>();
-        auto prior = inPrior_.AllocTensor<float>();
-        DataCopyPad(raw, raw_[(b * n_ + start) * 6],
-            DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
-            DataCopyPadExtParams<T>{false, 0, 0, 0});
-        DataCopyPad(prior, prior_[start * 5],
-            DataCopyExtParams{1, count * 20, 0, 0, 0},
-            DataCopyPadExtParams<float>{false, 0, 0, 0});
-        inRaw_.EnQue(raw);
-        inPrior_.EnQue(prior);
-    }
-
     TPipe pipe_;
     TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
     TQue<QuePosition::VECOUT, 1> outQueue_;
