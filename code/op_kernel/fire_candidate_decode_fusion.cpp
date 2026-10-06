@@ -14,7 +14,6 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(storage_, 6 * (Pack == 1 ? 32 : 64));
         Duplicate(Local<float>(5), 1.0f, Pack == 1 ? 8 : 16);
     }
     __aicore__ inline void Process()
@@ -31,7 +30,7 @@ public:
             DataCopyPad(prior, prior_[(i % n_) * 5],
                 DataCopyExtParams{1, count * 20, 0, 0, 0},
                 DataCopyPadExtParams<float>{false, 0, 0, 0});
-            auto mv = pipe_.FetchEventID(HardEvent::MTE2_V);
+            constexpr uint32_t mv = 0;
             SetFlag<HardEvent::MTE2_V>(mv);
             WaitFlag<HardEvent::MTE2_V>(mv);
             auto sig = Local<float>(3);
@@ -47,7 +46,7 @@ public:
             Adds(sig, sig, 1.0f, count * 6);
             PipeBarrier<PIPE_V>();
             Div(sig, Local<float>(5), sig, count * 6);
-            auto vs = pipe_.FetchEventID(HardEvent::V_S);
+            constexpr uint32_t vs = 0;
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
             auto result = Local<float>(4);
@@ -74,7 +73,7 @@ public:
             result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
             result.SetValue(row * 5 + 4, score);
             }
-            auto sv = pipe_.FetchEventID(HardEvent::S_V);
+            constexpr uint32_t sv = 0;
             SetFlag<HardEvent::S_V>(sv);
             WaitFlag<HardEvent::S_V>(sv);
             auto dst = Local<T>(2);
@@ -82,24 +81,25 @@ public:
                 Cast(dst, result, RoundMode::CAST_RINT, count * 5);
             else
                 DataCopy(dst, result, ((count * 5 + 7) / 8) * 8);
-            auto vm = pipe_.FetchEventID(HardEvent::V_MTE3);
+            constexpr uint32_t vm = 0;
             SetFlag<HardEvent::V_MTE3>(vm);
             WaitFlag<HardEvent::V_MTE3>(vm);
             DataCopyPad(out_[i * 5], dst,
                 DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
-            auto om = pipe_.FetchEventID(HardEvent::MTE3_V);
+            constexpr uint32_t om = 0;
             SetFlag<HardEvent::MTE3_V>(om);
             WaitFlag<HardEvent::MTE3_V>(om);
         }
     }
 private:
-    TPipe pipe_;
     template <typename U>
     __aicore__ inline LocalTensor<U> Local(uint32_t slot)
     {
-        return storage_.Get<U>()[slot * (Pack == 1 ? 32 : 64) / sizeof(U)];
+        constexpr uint32_t Bytes = Pack == 1 ? 32 : 64;
+        const TPosition pos = slot < 2 ? TPosition::VECIN :
+            (slot == 2 ? TPosition::VECOUT : TPosition::VECCALC);
+        return LocalTensor<U>(pos, slot * Bytes, Bytes / sizeof(U));
     }
-    TBuf<TPosition::VECCALC> storage_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
     uint32_t n_, total_, cores_, tiles_;
