@@ -257,9 +257,10 @@ private:
     uint32_t batch_, n_, cores_, segments_;
 };
 
-template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false>
+template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false, bool TransposeOut = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
+    static constexpr bool Transpose = TransposeOut && sizeof(T) == 4;
     static constexpr bool Reuse = (Tile == 1024 || CachePrior) && sizeof(T) == 4;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -281,7 +282,18 @@ public:
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
         pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
-        pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
+        if constexpr (Transpose) {
+            pipe_.InitBuffer(transposePad_, Tile * 8 * sizeof(float));
+            pipe_.InitBuffer(transposeMask_, 32);
+            Duplicate(transposeMask_.Get<uint32_t>(), uint32_t(0x1f1f1f1f), 8);
+            auto c = columns_.Get<float>();
+            auto pad = transposePad_.Get<float>();
+            for (uint32_t i = 0; i < 16; ++i) {
+                const uint32_t field = i % 8 < 5 ? i % 8 : 5;
+                transposeSrc_[i] = uint64_t(c[field * Pitch + (i / 8) * 8].GetPhyAddr());
+                transposeDst_[i] = uint64_t(pad[((i / 2) + (i % 2) * 8) * 8].GetPhyAddr());
+            }
+        } else pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
         auto r = rawIndex_.Get<int32_t>();
         auto p = priorIndex_.Get<int32_t>();
         CreateVecIndex(r, int32_t(0), Tile);
@@ -289,6 +301,7 @@ public:
         PipeBarrier<PIPE_V>();
         Muls(r, r, int32_t(24), Tile);
         Muls(p, p, int32_t(20), Tile);
+        if constexpr (!Transpose) {
         if constexpr (Reuse) {
             auto seq = columns_.Get<float>();
             auto row = seq[Tile * 5];
@@ -337,6 +350,7 @@ public:
         Muls(mod, mod, 4.0f, Tile * 5);
         PipeBarrier<PIPE_V>();
         Cast(index, mod, RoundMode::CAST_RINT, Tile * 5);
+        }
         }
         Duplicate(ones_.Get<float>(), 1.0f, 64);
         PipeBarrier<PIPE_V>();
@@ -414,8 +428,19 @@ private:
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
             else packed = packed_.Get<float>();
-            Gather(packed, c, packIndex_.Get<uint32_t>(), 0, uint64_t(64),
-                uint8_t((count * 5 + 63) / 64), 8);
+            if constexpr (Transpose) {
+                const uint8_t repeats = uint8_t((count + 15) / 16);
+                TransDataTo5HD<float>(transposeDst_, transposeSrc_,
+                    {false, false, repeats, uint16_t(repeats == 1 ? 0 : 16),
+                     uint16_t(repeats == 1 ? 0 : 2)});
+                PipeBarrier<PIPE_V>();
+                uint64_t retained = 0;
+                GatherMask(packed, transposePad_.Get<float>(), transposeMask_.Get<uint32_t>(),
+                    false, 0, {1, uint8_t(repeats * 2), 8, 0}, retained);
+            } else {
+                Gather(packed, c, packIndex_.Get<uint32_t>(), 0, uint64_t(64),
+                    uint8_t((count * 5 + 63) / 64), 8);
+            }
             PipeBarrier<PIPE_V>();
             if constexpr (sizeof(T) == 2)
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
@@ -484,6 +509,8 @@ private:
         inPrior_.EnQue(prior);
     }
 
+    uint64_t transposeSrc_[16], transposeDst_[16];
+    TBuf<TPosition::VECCALC> transposePad_, transposeMask_;
     TPipe pipe_;
     TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
     TQue<QuePosition::VECOUT, 1> outQueue_;
@@ -513,7 +540,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 6) {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 768, false, true> op;
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 768, false, true, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 7) {
