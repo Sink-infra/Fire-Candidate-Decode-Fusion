@@ -123,13 +123,12 @@ class SmallVectorDecode {
     template<typename U>
     __aicore__ inline LocalTensor<U> At(TPosition pos, uint32_t address, uint32_t count)
     {
-        return storage_.Get<U>()[address / sizeof(U)];
+        return LocalTensor<U>(pos, 65536 + address, count);
     }
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &d)
     {
-        pipe_.InitBuffer(storage_, 5632);
         n_ = d.candidates; tiles_ = n_ / Pack; total_ = d.batch * tiles_; cores_ = d.cores;
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
@@ -218,8 +217,6 @@ public:
         }
     }
 private:
-    TPipe pipe_;
-    TBuf<TPosition::VECCALC> storage_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
     uint32_t n_, tiles_, total_, cores_;
