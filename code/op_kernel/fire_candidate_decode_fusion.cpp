@@ -4,9 +4,8 @@
 
 using namespace AscendC;
 
-template <typename T>
+template <typename T, uint32_t Tile>
 class KernelFireCandidateDecodeFusion {
-    static constexpr uint32_t Tile = 1024;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
@@ -50,7 +49,7 @@ public:
         PipeBarrier<PIPE_V>();
         Sub(mod, seq, mod, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, 1024.0f, Tile * 5);
+        Muls(mod, mod, (Tile == 64 ? 64.0f : 1024.0f), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
@@ -158,7 +157,13 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    KernelFireCandidateDecodeFusion<DT_RAW_PRED> op;
-    op.Init(raw_pred, priors, decoded, data);
-    op.Process();
+    if (data.candidates <= 128) {
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 64> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else {
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 1024> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    }
 }
