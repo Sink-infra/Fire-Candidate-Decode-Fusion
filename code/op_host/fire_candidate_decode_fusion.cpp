@@ -66,7 +66,6 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
     }
     data->cores = cores;
     context->SetBlockDim(cores);
-    if (total <= 128 && context->SetScheduleMode(1) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
     ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED, PATH);
     context->GetWorkspaceSizes(1)[0] = 0;
