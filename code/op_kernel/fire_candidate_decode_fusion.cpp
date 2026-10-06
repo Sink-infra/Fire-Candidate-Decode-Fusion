@@ -265,7 +265,6 @@ public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
     {
-        const int64_t initBegin = GetSystemCycle();
         batch_ = data.batch;
         n_ = data.candidates;
         cores_ = data.cores;
@@ -340,8 +339,7 @@ public:
         Cast(index, mod, RoundMode::CAST_RINT, Tile * 5);
         }
         Duplicate(ones_.Get<float>(), 1.0f, 64);
-        PipeBarrier<PIPE_ALL>();
-        stages_[0] = GetSystemCycle() - initBegin;
+        PipeBarrier<PIPE_V>();
     }
 
     __aicore__ inline void Process()
@@ -370,8 +368,6 @@ private:
     __aicore__ inline void Compute(LocalTensor<T> raw, LocalTensor<float> prior,
                                   uint32_t b, uint32_t start, uint32_t count)
     {
-            PipeBarrier<PIPE_ALL>();
-            int64_t stageBegin = GetSystemCycle();
             LocalTensor<float> sig;
             if constexpr (Reuse) {
                 sig = raw;
@@ -392,9 +388,6 @@ private:
             Div(sig, ones_.Get<float>(), sig, uint64_t(64),
                 uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
             PipeBarrier<PIPE_V>();
-            PipeBarrier<PIPE_ALL>();
-            stages_[2] += GetSystemCycle() - stageBegin;
-            stageBegin = GetSystemCycle();
             auto c = columns_.Get<float>();
             const auto ri = rawIndex_.Get<uint32_t>();
             const auto pi = priorIndex_.Get<uint32_t>();
@@ -405,9 +398,6 @@ private:
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             }
             PipeBarrier<PIPE_V>();
-            PipeBarrier<PIPE_ALL>();
-            stages_[3] += GetSystemCycle() - stageBegin;
-            stageBegin = GetSystemCycle();
             Muls(c, c, 2.0f, Pitch * 4);
             PipeBarrier<PIPE_V>();
             Adds(c, c, -0.5f, Pitch * 2);
@@ -420,9 +410,6 @@ private:
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
-            PipeBarrier<PIPE_ALL>();
-            stages_[4] += GetSystemCycle() - stageBegin;
-            stageBegin = GetSystemCycle();
             auto dst = outQueue_.AllocTensor<T>();
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
@@ -434,16 +421,11 @@ private:
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
             else if constexpr (!Reuse)
                 DataCopy(dst, packed, ((count * 5 + 7) / 8) * 8);
-            PipeBarrier<PIPE_ALL>();
-            stages_[5] += GetSystemCycle() - stageBegin;
-            stageBegin = GetSystemCycle();
             outQueue_.EnQue(dst);
             dst = outQueue_.DeQue<T>();
             DataCopyPad(out_[(b * n_ + start) * 5], dst,
                         DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
             outQueue_.FreeTensor(dst);
-            PipeBarrier<PIPE_ALL>();
-            stages_[6] += GetSystemCycle() - stageBegin;
     }
     __aicore__ inline void LoadRaw(uint32_t b, uint32_t start, uint32_t count)
     {
@@ -461,8 +443,6 @@ private:
         if (end > n_) end = n_;
         for (uint32_t start = begin; start < end; start += Tile) {
             const uint32_t count = start + Tile <= end ? Tile : end - start;
-            PipeBarrier<PIPE_ALL>();
-            const int64_t priorBegin = GetSystemCycle();
             auto prior = inPrior_.AllocTensor<float>();
             DataCopyPad(prior, prior_[start * 5],
                 DataCopyExtParams{1, count * 20, 0, 0, 0},
@@ -475,8 +455,6 @@ private:
                        uint64_t(64), uint8_t((count + 63) / 64), 8);
             PipeBarrier<PIPE_V>();
             inPrior_.FreeTensor(prior);
-            PipeBarrier<PIPE_ALL>();
-            stages_[1] += GetSystemCycle() - priorBegin;
             LoadRaw(0, start, count);
             for (uint32_t b = 0; b < batch_; ++b) {
                 auto raw = inRaw_.DeQue<T>();
@@ -485,18 +463,6 @@ private:
                 Compute(raw, unused, b, start, count);
                 inRaw_.FreeTensor(raw);
             }
-        }
-        if constexpr (sizeof(T) == 4) {
-            PipeBarrier<PIPE_ALL>();
-            auto diag = outQueue_.AllocTensor<T>();
-            for (uint32_t j = 0; j < 8; ++j) diag.SetValue(j, float(stages_[j]) / 50.0f);
-            const auto event = pipe_.FetchEventID(HardEvent::S_MTE3);
-            SetFlag<HardEvent::S_MTE3>(event);
-            WaitFlag<HardEvent::S_MTE3>(event);
-            outQueue_.EnQue(diag);
-            diag = outQueue_.DeQue<T>();
-            DataCopyPad(out_[begin * 5], diag, DataCopyExtParams{1, 32, 0, 0, 0});
-            outQueue_.FreeTensor(diag);
         }
     }
 
@@ -518,7 +484,6 @@ private:
         inPrior_.EnQue(prior);
     }
 
-    int64_t stages_[8] = {};
     TPipe pipe_;
     TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
     TQue<QuePosition::VECOUT, 1> outQueue_;
