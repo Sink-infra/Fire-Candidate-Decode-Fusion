@@ -289,7 +289,31 @@ public:
         PipeBarrier<PIPE_V>();
         Muls(r, r, int32_t(24), Tile);
         Muls(p, p, int32_t(20), Tile);
-        if constexpr (Reuse) {
+        if constexpr (CachePrior) {
+            LocalTensor<float> seq, row;
+            if constexpr (Reuse) {
+                seq = columns_.Get<float>();
+                row = seq[Tile * 5];
+            } else {
+                seq = packed_.Get<float>();
+                row = rawFloat_.Get<float>();
+            }
+            auto index = packIndex_.Get<int32_t>();
+            CreateVecIndex(seq, 0.0f, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Muls(row, seq, 0.2f, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Cast(index, row, RoundMode::CAST_FLOOR, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Cast(row, index, RoundMode::CAST_NONE, Tile * 5);
+            Muls(seq, seq, (Tile == 768 ? 3104.0f : 4128.0f), Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Muls(row, row, (Tile == 768 ? -15516.0f : -20636.0f), Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Add(seq, seq, row, Tile * 5);
+            PipeBarrier<PIPE_V>();
+            Cast(index, seq, RoundMode::CAST_RINT, Tile * 5);
+        } else if constexpr (Reuse) {
             auto seq = columns_.Get<float>();
             auto row = seq[Tile * 5];
             auto index = packIndex_.Get<int32_t>();
