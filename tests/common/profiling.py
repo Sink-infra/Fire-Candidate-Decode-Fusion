@@ -37,8 +37,10 @@ def validate_environment(build, toolkit):
     version = None
     for path in versions:
         if path.is_file():
-            match = re.search(r'^(?:required_package_runtime_version|version)\s*=\s*["\']?([^"\'\s]+)',
-                              path.read_text(), re.M)
+            match = re.search(r'^(?:Version|version)\s*=\s*["\']?([^"\'\s]+)',
+                              path.read_text(), re.M) or re.search(
+                r'^(?:required_package_runtime_version|version)\s*=\s*["\']?([^"\'\s]+)',
+                path.read_text(), re.M)
             if match:
                 version = match[1]
                 break
