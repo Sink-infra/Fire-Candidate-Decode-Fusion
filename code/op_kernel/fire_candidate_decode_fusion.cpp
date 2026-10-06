@@ -42,7 +42,7 @@ public:
             if constexpr (sizeof(T) == 2)
                 Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
             else
-                sig = raw;
+                DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             PipeBarrier<PIPE_V>();
             Muls(sig, sig, -1.0f, count * 6);
             PipeBarrier<PIPE_V>();
