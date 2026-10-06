@@ -325,7 +325,7 @@ public:
         PipeBarrier<PIPE_V>();
         Add(mod, mod, row, Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(mod, mod, 4.0f, Tile * 5);
+        Muls(mod, mod, (CachePrior && sizeof(T) == 2) ? 2.0f : 4.0f, Tile * 5);
         PipeBarrier<PIPE_V>();
         Cast(index, mod, RoundMode::CAST_RINT, Tile * 5);
         }
@@ -402,6 +402,13 @@ private:
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
             auto dst = outQueue_.AllocTensor<T>();
+            if constexpr (CachePrior && sizeof(T) == 2) {
+                auto quantized = packed_.Get<T>();
+                Cast(quantized, c, RoundMode::CAST_RINT, Pitch * 5);
+                PipeBarrier<PIPE_V>();
+                Gather(dst, quantized, packIndex_.Get<uint32_t>(), 0, uint64_t(128),
+                       uint8_t((count * 5 + 127) / 128), 8);
+            } else {
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
             else packed = packed_.Get<float>();
@@ -412,6 +419,7 @@ private:
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
             else if constexpr (!Reuse)
                 DataCopy(dst, packed, ((count * 5 + 7) / 8) * 8);
+            }
             outQueue_.EnQue(dst);
             dst = outQueue_.DeQue<T>();
             DataCopyPad(out_[(b * n_ + start) * 5], dst,
