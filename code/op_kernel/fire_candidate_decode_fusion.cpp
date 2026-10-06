@@ -14,9 +14,9 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(inRaw_, 1, 32);
-        pipe_.InitBuffer(inPrior_, 1, 32);
-        pipe_.InitBuffer(outQueue_, 1, 32);
+        pipe_.InitBuffer(inRaw_, 32);
+        pipe_.InitBuffer(inPrior_, 32);
+        pipe_.InitBuffer(outQueue_, 32);
         pipe_.InitBuffer(sigBuf_, 32);
         pipe_.InitBuffer(resultBuf_, 32);
         pipe_.InitBuffer(oneBuf_, 32);
@@ -25,16 +25,17 @@ public:
     __aicore__ inline void Process()
     {
         for (uint32_t i = GetBlockIdx(); i < total_; i += cores_) {
-            auto raw = inRaw_.AllocTensor<T>();
-            auto prior = inPrior_.AllocTensor<float>();
+            auto raw = inRaw_.Get<T>();
+            auto prior = inPrior_.Get<float>();
             DataCopyPad(raw, raw_[i * 6],
                 DataCopyExtParams{1, 6 * uint32_t(sizeof(T)), 0, 0, 0},
                 DataCopyPadExtParams<T>{false, 0, 0, 0});
             DataCopyPad(prior, prior_[(i % n_) * 5],
                 DataCopyExtParams{1, 20, 0, 0, 0},
                 DataCopyPadExtParams<float>{false, 0, 0, 0});
-            inRaw_.EnQue(raw); inPrior_.EnQue(prior);
-            raw = inRaw_.DeQue<T>(); prior = inPrior_.DeQue<float>();
+            auto mv = pipe_.FetchEventID(HardEvent::MTE2_V);
+            SetFlag<HardEvent::MTE2_V>(mv);
+            WaitFlag<HardEvent::MTE2_V>(mv);
             auto sig = sigBuf_.Get<float>();
             if constexpr (sizeof(T) == 2)
                 Cast(sig, raw, RoundMode::CAST_NONE, 6);
@@ -76,22 +77,25 @@ public:
             auto sv = pipe_.FetchEventID(HardEvent::S_V);
             SetFlag<HardEvent::S_V>(sv);
             WaitFlag<HardEvent::S_V>(sv);
-            auto dst = outQueue_.AllocTensor<T>();
+            auto dst = outQueue_.Get<T>();
             if constexpr (sizeof(T) == 2)
                 Cast(dst, result, RoundMode::CAST_RINT, 5);
             else
                 DataCopy(dst, result, 8);
-            outQueue_.EnQue(dst); dst = outQueue_.DeQue<T>();
+            auto vm = pipe_.FetchEventID(HardEvent::V_MTE3);
+            SetFlag<HardEvent::V_MTE3>(vm);
+            WaitFlag<HardEvent::V_MTE3>(vm);
             DataCopyPad(out_[i * 5], dst,
                 DataCopyExtParams{1, 5 * uint32_t(sizeof(T)), 0, 0, 0});
-            outQueue_.FreeTensor(dst);
-            inRaw_.FreeTensor(raw); inPrior_.FreeTensor(prior);
+            auto om = pipe_.FetchEventID(HardEvent::MTE3_V);
+            SetFlag<HardEvent::MTE3_V>(om);
+            WaitFlag<HardEvent::MTE3_V>(om);
         }
     }
 private:
     TPipe pipe_;
-    TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
-    TQue<QuePosition::VECOUT, 1> outQueue_;
+    TBuf<TPosition::VECIN> inRaw_, inPrior_;
+    TBuf<TPosition::VECOUT> outQueue_;
     TBuf<TPosition::VECCALC> sigBuf_, resultBuf_, oneBuf_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
