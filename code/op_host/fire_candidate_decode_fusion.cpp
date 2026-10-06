@@ -26,10 +26,15 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
     data->candidates = r.GetDim(1);
     const uint32_t tiles = (data->candidates + 255) / 256;
     if (cores > tiles * data->batch) cores = tiles * data->batch;
+    uint32_t PATH = data->batch * data->candidates <= 128 ? 0 : 1;
+    if (PATH == 0) {
+        cores = platform.GetCoreNumAiv();
+        if (cores > data->batch * data->candidates) cores = data->batch * data->candidates;
+    }
     data->cores = cores;
     context->SetBlockDim(cores);
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
-    ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED);
+    ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED, PATH);
     context->GetWorkspaceSizes(1)[0] = 0;
     return ge::GRAPH_SUCCESS;
 }

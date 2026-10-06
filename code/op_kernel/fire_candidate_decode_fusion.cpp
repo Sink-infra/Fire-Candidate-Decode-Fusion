@@ -3,6 +3,7 @@
 #include "tiling_key_fire_candidate_decode_fusion.h"
 
 using namespace AscendC;
+#include "small_candidate_decode.h"
 
 template <typename T>
 class KernelFireCandidateDecodeFusion {
@@ -22,7 +23,7 @@ public:
         pipe_.InitBuffer(inPrior_, 1, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
         pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
-        pipe_.InitBuffer(columns_, (Tile * 12 + 16) * sizeof(float));
+        pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
         pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
         pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
@@ -88,30 +89,14 @@ public:
                 DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             }
             PipeBarrier<PIPE_V>();
-            Maxs(sig, sig, -80.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
             Muls(sig, sig, -1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             PipeBarrier<PIPE_V>();
             Exp(sig, sig, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             PipeBarrier<PIPE_V>();
             Adds(sig, sig, 1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             PipeBarrier<PIPE_V>();
-            auto inv = columns_.Get<float>()[8];
-            auto error = columns_.Get<float>()[Tile * 6 + 8];
-            const uint8_t nrRepeats = (count * 6 + 63) / 64;
-            Reciprocal(inv, sig, uint64_t(64), nrRepeats, {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
-            for (uint32_t refinement = 0; refinement < 2; ++refinement) {
-                Mul(error, sig, inv, uint64_t(64), nrRepeats, {1, 1, 1, 8, 8, 8});
-                PipeBarrier<PIPE_V>();
-                Muls(error, error, -1.0f, uint64_t(64), nrRepeats, {1, 1, 8, 8});
-                PipeBarrier<PIPE_V>();
-                Adds(error, error, 2.0f, uint64_t(64), nrRepeats, {1, 1, 8, 8});
-                PipeBarrier<PIPE_V>();
-                Mul(inv, inv, error, uint64_t(64), nrRepeats, {1, 1, 1, 8, 8, 8});
-                PipeBarrier<PIPE_V>();
-            }
-            Muls(sig, inv, 1.0f, uint64_t(64), nrRepeats, {1, 1, 8, 8});
+            Div(sig, ones_.Get<float>(), sig, uint64_t(64),
+                uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
             PipeBarrier<PIPE_V>();
             auto c = columns_.Get<float>();
             const auto ri = rawIndex_.Get<uint32_t>();
@@ -162,13 +147,19 @@ private:
     uint32_t batch_, n_, cores_;
 };
 
-template <typename DT_RAW_PRED>
+template <typename DT_RAW_PRED, uint32_t PATH>
 __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
     GM_ADDR priors, GM_ADDR decoded, GM_ADDR workspace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    KernelFireCandidateDecodeFusion<DT_RAW_PRED> op;
-    op.Init(raw_pred, priors, decoded, data);
-    op.Process();
+    if constexpr (PATH == 0) {
+        SmallCandidateDecode<DT_RAW_PRED> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else {
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    }
 }
