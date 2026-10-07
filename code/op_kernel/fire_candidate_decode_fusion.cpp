@@ -485,10 +485,9 @@ private:
     uint32_t batch_, n_, cores_, segments_;
 };
 
-template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false, bool DirectOut = false>
+template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
-    static constexpr bool Direct = DirectOut && sizeof(T) == 4;
     static constexpr bool Reuse = (Tile == 1024 || CachePrior) && sizeof(T) == 4;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -510,20 +509,7 @@ public:
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
         pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
-        if constexpr (Direct) {
-            pipe_.InitBuffer(transposeOut_, Tile * 8 * sizeof(float));
-            pipe_.InitBuffer(transposeMask_, 32);
-            Duplicate(transposeMask_.Get<uint32_t>(), uint32_t(0x1f1f1f1f), 8);
-            auto c = columns_.Get<float>();
-            auto pad = transposeOut_.Get<float>();
-            for (uint32_t i = 0; i < 16; ++i) {
-                const uint32_t field = i % 8 < 5 ? i % 8 : 5;
-                transposeSrc_[i] = uint64_t(c[field * Pitch + (i / 8) * 8].GetPhyAddr());
-                transposeDst_[i] = uint64_t(pad[((i / 2) + (i % 2) * 8) * 8].GetPhyAddr());
-            }
-        } else {
-            pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
-        }
+        pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
         auto r = rawIndex_.Get<int32_t>();
         auto p = priorIndex_.Get<int32_t>();
         CreateVecIndex(r, int32_t(0), Tile);
@@ -531,7 +517,6 @@ public:
         PipeBarrier<PIPE_V>();
         Muls(r, r, int32_t(24), Tile);
         Muls(p, p, int32_t(20), Tile);
-        if constexpr (!Direct) {
         LocalTensor<int32_t> seq, row;
         if constexpr (Reuse) {
             seq = columns_.Get<int32_t>();
@@ -551,7 +536,6 @@ public:
         Muls(row, row, int32_t(4 - 20 * Pitch), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(index, seq, row, Tile * 5);
-        }
         Duplicate(ones_.Get<float>(), 1.0f, 64);
         PipeBarrier<PIPE_V>();
     }
@@ -624,26 +608,6 @@ private:
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
-            if constexpr (Direct) {
-                auto dst = outQueue_.AllocTensor<T>();
-                const uint8_t repeats = uint8_t((count + 15) / 16);
-                TransDataTo5HD<float>(transposeDst_, transposeSrc_,
-                    {false, false, repeats, uint16_t(repeats == 1 ? 0 : 16),
-                     uint16_t(repeats == 1 ? 0 : 2)});
-                PipeBarrier<PIPE_V>();
-                SetMaskNorm();
-                SetVectorMask<float>(uint64_t(0), uint64_t(-1));
-                GatherMaskImpl<float>((__ubuf__ float *)dst.GetPhyAddr(),
-                    (__ubuf__ float *)transposeOut_.Get<float>().GetPhyAddr(),
-                    (__ubuf__ float *)transposeMask_.Get<uint32_t>().GetPhyAddr(),
-                    uint8_t(0), GatherMaskParams{1, uint16_t(repeats * 2), 8, 0});
-                PipeBarrier<PIPE_V>();
-                outQueue_.EnQue(dst);
-                dst = outQueue_.DeQue<T>();
-                DataCopyPad(out_[(b * n_ + start) * 5], dst,
-                    DataCopyExtParams{1, count * 20, 0, 0, 0});
-                outQueue_.FreeTensor(dst);
-            } else {
             auto dst = outQueue_.AllocTensor<T>();
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
@@ -660,7 +624,6 @@ private:
             DataCopyPad(out_[(b * n_ + start) * 5], dst,
                         DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
             outQueue_.FreeTensor(dst);
-            }
     }
     __aicore__ inline void LoadRaw(uint32_t b, uint32_t start, uint32_t count)
     {
@@ -724,8 +687,6 @@ private:
     TQue<QuePosition::VECOUT, 1> outQueue_;
     TBuf<TPosition::VECCALC> rawFloat_, columns_, packed_, ones_;
     TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_;
-    TBuf<TPosition::VECCALC> transposeOut_, transposeMask_;
-    uint64_t transposeSrc_[16], transposeDst_[16];
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
     uint32_t batch_, n_, cores_, segments_;
@@ -936,11 +897,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 16 || PATH == 17) {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, PATH == 16 ? 768 : 1024, false, true, true> op;
-        op.Init(raw_pred, priors, decoded, data);
-        op.Process();
-    } else if constexpr (PATH == 15) {
+    if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
