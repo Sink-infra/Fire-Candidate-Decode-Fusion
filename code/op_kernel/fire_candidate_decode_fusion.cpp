@@ -693,7 +693,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool BulkStride = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -703,7 +703,7 @@ class PairedBatchCandidateDecode {
     static constexpr uint32_t SharedAddr = FloatAddr + (Reuse ? 0 : Tile * 24);
     static constexpr uint32_t SharedBytes = Tile * 5 * sizeof(T);
     static constexpr uint32_t ColumnAddr = SharedAddr + SharedBytes;
-    static constexpr uint32_t OneAddr = ColumnAddr + Pitch * (BulkStride ? 60 : 44);
+    static constexpr uint32_t OneAddr = ColumnAddr + Pitch * 44;
     static constexpr uint32_t RawIdxAddr = OneAddr + 256;
     static constexpr uint32_t PriorIdxAddr = RawIdxAddr + Tile * 4;
     static constexpr uint32_t PackIdxAddr = PriorIdxAddr + HalfTile * 4;
@@ -776,12 +776,6 @@ public:
             for (uint32_t j = 0; j < 5; ++j)
                 DataCopy(c[(j + 6) * Pitch + HalfTile], c[(j + 6) * Pitch], HalfTile);
             PipeBarrier<PIPE_V>();
-            if constexpr (BulkStride) {
-                auto stride = At<float>(ColumnAddr + Pitch * 44, Pitch * 4);
-                for (uint32_t j = 0; j < 4; ++j)
-                    DataCopy(stride[j * Pitch], c[8 * Pitch], Pitch);
-                PipeBarrier<PIPE_V>();
-            }
             LoadRaw(0, start, count);
             for (uint32_t b = 0; b < batch_; b += 2) {
                 WaitFlag<HardEvent::MTE2_V>(rawReady_);
@@ -860,12 +854,8 @@ private:
             Add(c, c, c[6 * Pitch], Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], Pitch * 2);
             PipeBarrier<PIPE_V>();
-            if constexpr (BulkStride)
-                Mul(c, c, At<float>(ColumnAddr + Pitch * 44, Pitch * 4), Pitch * 4);
-            else {
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
-            }
             PipeBarrier<PIPE_V>();
             if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
             auto dst = At<T>(SharedAddr, Tile * 5, TPosition::VECOUT);
@@ -907,13 +897,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 16 || PATH == 17 || PATH == 18) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 16 ? 256 : (PATH == 17 ? 320 : 1408),
-            PATH == 17, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
-    } else if constexpr (PATH == 15) {
+    if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
