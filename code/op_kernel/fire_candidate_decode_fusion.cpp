@@ -693,7 +693,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool SingleSpan = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool SingleSpan = false, bool TrimFinal = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -721,7 +721,7 @@ public:
         rawFree_ = pipe->AllocEventID<HardEvent::V_MTE2>();
         outReady_ = pipe->FetchEventID(HardEvent::V_MTE3);
         outFree_ = pipe->FetchEventID(HardEvent::MTE3_V);
-        poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
+        if constexpr (!TrimFinal) poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
         auto ri = At<int32_t>(RawIdxAddr, Tile);
         auto pi = At<int32_t>(PriorIdxAddr, HalfTile);
         CreateVecIndex(ri, int32_t(0), Tile);
@@ -821,7 +821,9 @@ public:
         }
         if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
         if (poolPending_) WaitFlag<HardEvent::MTE3_MTE2>(poolFree_);
+        if constexpr (!TrimFinal) {
         if (rawUsed_) WaitFlag<HardEvent::V_MTE2>(rawFree_);
+        }
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_);
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(priorReady_);
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
@@ -846,8 +848,15 @@ private:
     }
     __aicore__ inline void ReleaseRawAndPrefetch(uint32_t b, uint32_t start, uint32_t count)
     {
-        SetFlag<HardEvent::V_MTE2>(rawFree_);
-        if (b + 2 < (SingleSpan ? 4 : batch_)) LoadRaw(b + 2, start, count);
+        if constexpr (TrimFinal) {
+            if (b + 2 < 4) {
+                SetFlag<HardEvent::V_MTE2>(rawFree_);
+                LoadRaw(b + 2, start, count);
+            }
+        } else {
+            SetFlag<HardEvent::V_MTE2>(rawFree_);
+            if (b + 2 < (SingleSpan ? 4 : batch_)) LoadRaw(b + 2, start, count);
+        }
     }
     __aicore__ inline void Compute(LocalTensor<T> raw, LocalTensor<float> prior,
                                   uint32_t b, uint32_t start, uint32_t validCount)
@@ -913,9 +922,11 @@ private:
                 DataCopyExtParams{2, bytes, localGap, (n_ - validCount) * 5 * uint32_t(sizeof(T)), 0});
             SetFlag<HardEvent::MTE3_V>(outFree_);
             outPending_ = true;
-            if (b + 2 >= (SingleSpan ? 4 : batch_)) {
-                SetFlag<HardEvent::MTE3_MTE2>(poolFree_);
-                poolPending_ = true;
+            if constexpr (!TrimFinal) {
+                if (b + 2 >= (SingleSpan ? 4 : batch_)) {
+                    SetFlag<HardEvent::MTE3_MTE2>(poolFree_);
+                    poolPending_ = true;
+                }
             }
     }
 
@@ -933,7 +944,12 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 16 || PATH == 17) {
+    if constexpr (PATH == 18 || PATH == 19) {
+        TPipe pipe;
+        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 18 ? 256 : 320, PATH == 19, true, true> op;
+        op.Init(raw_pred, priors, decoded, data, &pipe);
+        op.Process();
+    } else if constexpr (PATH == 16 || PATH == 17) {
         TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 16 ? 256 : 320, PATH == 17, true> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);

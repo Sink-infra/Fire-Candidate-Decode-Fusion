@@ -88,6 +88,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         if (PATH == 12) PATH = 16;
         else if (PATH == 13) PATH = 17;
     }
+    if (PATH == 16) PATH = 18;
+    else if (PATH == 17) PATH = 19;
     data->cores = cores;
     context->SetBlockDim(cores);
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
