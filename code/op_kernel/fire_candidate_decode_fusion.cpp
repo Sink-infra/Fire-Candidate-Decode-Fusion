@@ -485,7 +485,7 @@ private:
     uint32_t batch_, n_, cores_, segments_;
 };
 
-template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false, bool SkipDiv = false>
+template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
     static constexpr bool Reuse = (Tile == 1024 || CachePrior) && sizeof(T) == 4;
@@ -583,9 +583,6 @@ private:
             PipeBarrier<PIPE_V>();
             Adds(sig, sig, 1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             PipeBarrier<PIPE_V>();
-            if constexpr (SkipDiv)
-                Muls(sig, sig, 1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            else
             Div(sig, ones_.Get<float>(), sig, uint64_t(64),
                 uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
             PipeBarrier<PIPE_V>();
@@ -900,11 +897,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 16 || PATH == 17) {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, PATH == 16 ? 768 : 1024, false, true, true> op;
-        op.Init(raw_pred, priors, decoded, data);
-        op.Process();
-    } else if constexpr (PATH == 15) {
+    if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
