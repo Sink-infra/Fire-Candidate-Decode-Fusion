@@ -82,6 +82,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         if (span >= 96 && span <= 128) PATH = 12;
         else if (span > 128 && span <= 160) PATH = 13;
     }
+    if (PATH == 14 && data->batch == 1 &&
+        data->candidates / 4 <= platform.GetCoreNumAiv()) PATH = 15;
     data->cores = cores;
     context->SetBlockDim(cores);
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
