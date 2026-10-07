@@ -55,6 +55,13 @@ public:
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
             auto result = Local<float>(4);
+            if constexpr (Pack == 4) {
+                if (count == 4) {
+                    DecodeRow<0>(sig, prior, result);
+                    DecodeRow<1>(sig, prior, result);
+                    DecodeRow<2>(sig, prior, result);
+                    DecodeRow<3>(sig, prior, result);
+                } else {
             for (uint32_t row = 0; row < count; ++row) {
             const float stride = prior.GetValue(row * 5 + 2);
             float x = 2.0f * sig.GetValue(row * 6 + 0);
@@ -77,6 +84,32 @@ public:
             result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
             result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
             result.SetValue(row * 5 + 4, score);
+            }
+                }
+            } else {
+            for (uint32_t row = 0; row < count; ++row) {
+            const float stride = prior.GetValue(row * 5 + 2);
+            float x = 2.0f * sig.GetValue(row * 6 + 0);
+            x = x - 0.5f;
+            x = x + prior.GetValue(row * 5 + 0);
+            x = x * stride;
+            float y = 2.0f * sig.GetValue(row * 6 + 1);
+            y = y - 0.5f;
+            y = y + prior.GetValue(row * 5 + 1);
+            y = y * stride;
+            float w = 2.0f * sig.GetValue(row * 6 + 2);
+            w = w * w;
+            w = w * prior.GetValue(row * 5 + 3);
+            w = w * stride;
+            float h = 2.0f * sig.GetValue(row * 6 + 3);
+            h = h * h;
+            h = h * prior.GetValue(row * 5 + 4);
+            h = h * stride;
+            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
+            result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
+            result.SetValue(row * 5 + 4, score);
+            }
             }
             constexpr uint32_t sv = 0;
             SetFlag<HardEvent::S_V>(sv);
@@ -101,6 +134,32 @@ public:
         }
     }
 private:
+    template <uint32_t Row>
+    __aicore__ inline void DecodeRow(LocalTensor<float> sig, LocalTensor<float> prior, LocalTensor<float> result)
+    {
+        constexpr uint32_t row = Row;
+            const float stride = prior.GetValue(row * 5 + 2);
+            float x = 2.0f * sig.GetValue(row * 6 + 0);
+            x = x - 0.5f;
+            x = x + prior.GetValue(row * 5 + 0);
+            x = x * stride;
+            float y = 2.0f * sig.GetValue(row * 6 + 1);
+            y = y - 0.5f;
+            y = y + prior.GetValue(row * 5 + 1);
+            y = y * stride;
+            float w = 2.0f * sig.GetValue(row * 6 + 2);
+            w = w * w;
+            w = w * prior.GetValue(row * 5 + 3);
+            w = w * stride;
+            float h = 2.0f * sig.GetValue(row * 6 + 3);
+            h = h * h;
+            h = h * prior.GetValue(row * 5 + 4);
+            h = h * stride;
+            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
+            result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
+            result.SetValue(row * 5 + 4, score);
+    }
     template <typename U>
     __aicore__ inline LocalTensor<U> Local(uint32_t slot)
     {
