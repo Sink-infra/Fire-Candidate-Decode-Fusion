@@ -316,7 +316,7 @@ private:
     uint32_t batch_, n_, cores_, segments_;
 };
 
-template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false>
+template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false, bool AutoVectors = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
     static constexpr bool Reuse = (Tile == 1024 || CachePrior) && sizeof(T) == 4;
@@ -407,16 +407,16 @@ private:
                 else
                     DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             }
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             Muls(sig, sig, -1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             Exp(sig, sig, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             Adds(sig, sig, 1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             Div(sig, ones_.Get<float>(), sig, uint64_t(64),
                 uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             auto c = columns_.Get<float>();
             const auto ri = rawIndex_.Get<uint32_t>();
             const auto pi = priorIndex_.Get<uint32_t>();
@@ -426,26 +426,26 @@ private:
             for (uint32_t j = 0; j < 5; ++j)
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             }
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             Muls(c, c, 2.0f, Pitch * 4);
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             Adds(c, c, -0.5f, Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], Pitch * 2);
             Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             Add(c, c, c[6 * Pitch], Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], Pitch * 2);
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             auto dst = outQueue_.AllocTensor<T>();
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
             else packed = packed_.Get<float>();
             Gather(packed, c, packIndex_.Get<uint32_t>(), 0, uint64_t(64),
                 uint8_t((count * 5 + 63) / 64), 8);
-            PipeBarrier<PIPE_V>();
+            if constexpr (!AutoVectors) PipeBarrier<PIPE_V>();
             if constexpr (sizeof(T) == 2)
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
             else if constexpr (!Reuse)
@@ -728,7 +728,11 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 14) {
+    if constexpr (PATH == 15 || PATH == 16) {
+        KernelFireCandidateDecodeFusion<DT_RAW_PRED, PATH == 15 ? 768 : 1024, false, true, true> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 14) {
         SmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
