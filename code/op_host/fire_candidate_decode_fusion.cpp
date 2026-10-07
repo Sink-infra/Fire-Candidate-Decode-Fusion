@@ -70,11 +70,6 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         if (span >= 528 && span <= 704) PATH = 8;
         else if (span > 704 && span <= 832) PATH = 9;
     }
-    if (data->batch == 1) {
-        if (PATH == 0) PATH = 10;
-        else if (PATH == 3 && data->candidates % 2 == 0) PATH = 11;
-        else if (PATH == 5) PATH = 12;
-    }
     data->cores = cores;
     context->SetBlockDim(cores);
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
