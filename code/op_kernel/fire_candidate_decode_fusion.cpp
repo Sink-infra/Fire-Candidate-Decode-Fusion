@@ -485,10 +485,9 @@ private:
     uint32_t batch_, n_, cores_, segments_;
 };
 
-template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false, bool DirectOut = false>
+template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
-    static constexpr bool Direct = DirectOut && sizeof(T) == 4;
     static constexpr bool Reuse = (Tile == 1024 || CachePrior) && sizeof(T) == 4;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -503,27 +502,14 @@ public:
         out_.SetGlobalBuffer((__gm__ T *)out);
         pipe_.InitBuffer(inRaw_, (Tile == 1024 || CachePrior) ? 2 : 1, Tile * 6 * sizeof(T));
         pipe_.InitBuffer(inPrior_, (Tile == 1024 && !CachePrior) ? 2 : 1, Tile * 5 * sizeof(float));
-        if constexpr (!Direct) pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
+        pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
         if constexpr (!Reuse) pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
         pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
         if constexpr (!Reuse) pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
         pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
-        if constexpr (Direct) {
-            pipe_.InitBuffer(transposeOut_, Tile * 8 * sizeof(float));
-            outReady_ = pipe_.FetchEventID(HardEvent::V_MTE3);
-            outFree_ = pipe_.FetchEventID(HardEvent::MTE3_V);
-            auto c = columns_.Get<float>();
-            auto pad = transposeOut_.Get<float>();
-            for (uint32_t i = 0; i < 16; ++i) {
-                const uint32_t field = i % 8 < 5 ? i % 8 : 5;
-                transposeSrc_[i] = uint64_t(c[field * Pitch + (i / 8) * 8].GetPhyAddr());
-                transposeDst_[i] = uint64_t(pad[((i / 2) + (i % 2) * 8) * 8].GetPhyAddr());
-            }
-        } else {
-            pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
-        }
+        pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
         auto r = rawIndex_.Get<int32_t>();
         auto p = priorIndex_.Get<int32_t>();
         CreateVecIndex(r, int32_t(0), Tile);
@@ -531,7 +517,6 @@ public:
         PipeBarrier<PIPE_V>();
         Muls(r, r, int32_t(24), Tile);
         Muls(p, p, int32_t(20), Tile);
-        if constexpr (!Direct) {
         LocalTensor<int32_t> seq, row;
         if constexpr (Reuse) {
             seq = columns_.Get<int32_t>();
@@ -551,20 +536,13 @@ public:
         Muls(row, row, int32_t(4 - 20 * Pitch), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(index, seq, row, Tile * 5);
-        }
         Duplicate(ones_.Get<float>(), 1.0f, 64);
         PipeBarrier<PIPE_V>();
     }
 
     __aicore__ inline void Process()
     {
-        if constexpr (CachePrior) {
-            ProcessCached();
-            if constexpr (Direct) {
-                if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
-            }
-            return;
-        }
+        if constexpr (CachePrior) { ProcessCached(); return; }
         const uint32_t tiles = Balanced ? segments_ : (n_ + Tile - 1) / Tile;
         if constexpr (Tile == 1024) {
             if (GetBlockIdx() < batch_ * tiles) Load(GetBlockIdx(), tiles);
@@ -630,19 +608,6 @@ private:
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
-            if constexpr (Direct) {
-                if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
-                const uint8_t repeats = uint8_t((count + 15) / 16);
-                TransDataTo5HD<float>(transposeDst_, transposeSrc_,
-                    {false, false, repeats, uint16_t(repeats == 1 ? 0 : 16),
-                     uint16_t(repeats == 1 ? 0 : 2)});
-                SetFlag<HardEvent::V_MTE3>(outReady_);
-                WaitFlag<HardEvent::V_MTE3>(outReady_);
-                DataCopyPad(out_[(b * n_ + start) * 5], transposeOut_.Get<float>(),
-                    DataCopyExtParams{uint16_t(count), 20, 0, 0, 0});
-                SetFlag<HardEvent::MTE3_V>(outFree_);
-                outPending_ = true;
-            } else {
             auto dst = outQueue_.AllocTensor<T>();
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
@@ -659,7 +624,6 @@ private:
             DataCopyPad(out_[(b * n_ + start) * 5], dst,
                         DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
             outQueue_.FreeTensor(dst);
-            }
     }
     __aicore__ inline void LoadRaw(uint32_t b, uint32_t start, uint32_t count)
     {
@@ -723,10 +687,6 @@ private:
     TQue<QuePosition::VECOUT, 1> outQueue_;
     TBuf<TPosition::VECCALC> rawFloat_, columns_, packed_, ones_;
     TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_;
-    TBuf<TPosition::VECOUT> transposeOut_;
-    uint64_t transposeSrc_[16], transposeDst_[16];
-    int32_t outReady_, outFree_;
-    bool outPending_ = false;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
     uint32_t batch_, n_, cores_, segments_;
@@ -937,11 +897,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 16 || PATH == 17) {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, PATH == 16 ? 768 : 1024, false, true, true> op;
-        op.Init(raw_pred, priors, decoded, data);
-        op.Process();
-    } else if constexpr (PATH == 15) {
+    if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
