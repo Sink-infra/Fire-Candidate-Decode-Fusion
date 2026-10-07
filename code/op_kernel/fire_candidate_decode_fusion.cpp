@@ -664,7 +664,11 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 8 || PATH == 9) {
+    if constexpr (PATH == 10) {
+        SmallCandidateDecode<DT_RAW_PRED, 4> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 8 || PATH == 9) {
         TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 8 ? 1408 : 1664> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
