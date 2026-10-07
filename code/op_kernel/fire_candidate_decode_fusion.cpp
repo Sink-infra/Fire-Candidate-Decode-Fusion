@@ -693,7 +693,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool TemporaryEvents = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool EarlyRaw = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -717,15 +717,9 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        if constexpr (TemporaryEvents) {
-            rawReady_ = pipe->FetchEventID(HardEvent::MTE2_V);
-            priorReady_ = rawReady_;
-            rawFree_ = pipe->FetchEventID(HardEvent::V_MTE2);
-        } else {
         rawReady_ = pipe->AllocEventID<HardEvent::MTE2_V>();
         priorReady_ = pipe->AllocEventID<HardEvent::MTE2_V>();
         rawFree_ = pipe->AllocEventID<HardEvent::V_MTE2>();
-        }
         outReady_ = pipe->FetchEventID(HardEvent::V_MTE3);
         outFree_ = pipe->FetchEventID(HardEvent::MTE3_V);
         poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
@@ -776,6 +770,7 @@ public:
                 DataCopyExtParams{1, count * 20, 0, 0, 0},
                 DataCopyPadExtParams<float>{false, 0, 0, 0});
             SetFlag<HardEvent::MTE2_V>(priorReady_);
+            if constexpr (EarlyRaw) LoadRaw(0, start, count);
             WaitFlag<HardEvent::MTE2_V>(priorReady_);
             auto c = At<float>(ColumnAddr, Pitch * 11);
             for (uint32_t j = 0; j < 5; ++j) {
@@ -790,7 +785,7 @@ public:
             for (uint32_t j = 0; j < 5; ++j)
                 DataCopy(c[(j + 6) * Pitch + HalfTile], c[(j + 6) * Pitch], HalfTile);
             PipeBarrier<PIPE_V>();
-            LoadRaw(0, start, count);
+            if constexpr (!EarlyRaw) LoadRaw(0, start, count);
             for (uint32_t b = 0; b < batch_; b += 2) {
                 WaitFlag<HardEvent::MTE2_V>(rawReady_);
                 auto raw = At<T>(0, Tile * 6, TPosition::VECIN);
@@ -800,11 +795,9 @@ public:
         if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
         if (poolPending_) WaitFlag<HardEvent::MTE3_MTE2>(poolFree_);
         if (rawUsed_) WaitFlag<HardEvent::V_MTE2>(rawFree_);
-        if constexpr (!TemporaryEvents) {
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_);
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(priorReady_);
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
-        }
     }
 private:
     __aicore__ inline void BuildRampCache()
