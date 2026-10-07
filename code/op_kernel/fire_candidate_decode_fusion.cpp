@@ -669,12 +669,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 14) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, 192, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
-    } else if constexpr (PATH == 12 || PATH == 13) {
+    if constexpr (PATH == 12 || PATH == 13) {
         TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);

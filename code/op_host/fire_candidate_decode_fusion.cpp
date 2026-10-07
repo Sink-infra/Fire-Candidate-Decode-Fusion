@@ -81,13 +81,6 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         const uint32_t span = ((groups + cores - 1) / cores) * 16;
         if (span >= 96 && span <= 128) PATH = 12;
         else if (span > 128 && span <= 160) PATH = 13;
-        uint32_t fullCores = platform.GetCoreNumAiv();
-        if (fullCores > groups) fullCores = groups;
-        const uint32_t fullSpan = ((groups + fullCores - 1) / fullCores) * 16;
-        if (fullSpan >= 64 && fullSpan <= 96) {
-            PATH = 14;
-            cores = fullCores;
-        }
     }
     data->cores = cores;
     context->SetBlockDim(cores);
