@@ -693,7 +693,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool StaticEvents = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -717,17 +717,12 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        if constexpr (StaticEvents) {
-            rawReady_ = 0; priorReady_ = 1; rawFree_ = 0;
-            outReady_ = 0; outFree_ = 0; poolFree_ = 0;
-        } else {
         rawReady_ = pipe->AllocEventID<HardEvent::MTE2_V>();
         priorReady_ = pipe->AllocEventID<HardEvent::MTE2_V>();
         rawFree_ = pipe->AllocEventID<HardEvent::V_MTE2>();
         outReady_ = pipe->FetchEventID(HardEvent::V_MTE3);
         outFree_ = pipe->FetchEventID(HardEvent::MTE3_V);
         poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
-        }
         auto ri = At<int32_t>(RawIdxAddr, Tile);
         auto pi = At<int32_t>(PriorIdxAddr, HalfTile);
         if constexpr (FastRamp) {
@@ -757,10 +752,6 @@ public:
         Add(index, seq, row, Tile * 5);
         Duplicate(At<float>(OneAddr, 64), 1.0f, 64);
         PipeBarrier<PIPE_V>();
-        if constexpr (FastRamp) {
-            SetFlag<HardEvent::V_MTE2>(rawFree_);
-            WaitFlag<HardEvent::V_MTE2>(rawFree_);
-        }
     }
     __aicore__ inline void Process()
     {
@@ -803,28 +794,26 @@ public:
         if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
         if (poolPending_) WaitFlag<HardEvent::MTE3_MTE2>(poolFree_);
         if (rawUsed_) WaitFlag<HardEvent::V_MTE2>(rawFree_);
-        if constexpr (!StaticEvents) {
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_);
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(priorReady_);
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
-        }
     }
 private:
     __aicore__ inline void BuildRampCache()
     {
         auto seed = At<int32_t>(OneAddr, 8);
         for (uint32_t i = 0; i < 8; ++i) seed.SetValue(i, int32_t(i));
-        const auto ready = StaticEvents ? 0 : pipe_->FetchEventID(HardEvent::S_V);
+        const auto ready = pipe_->FetchEventID(HardEvent::S_V);
         SetFlag<HardEvent::S_V>(ready);
         WaitFlag<HardEvent::S_V>(ready);
-        auto lanes = At<int32_t>(0, 64);
+        auto lanes = At<int32_t>(ColumnAddr + Tile * 20, 64);
         Brcb(lanes, seed, uint8_t(1), BrcbRepeatParams{1, 8});
         PipeBarrier<PIPE_V>();
         Muls(lanes, lanes, int32_t(8), 64);
         PipeBarrier<PIPE_V>();
         Add(lanes, lanes, seed, uint64_t(64), uint8_t(1), {1, 1, 0, 8, 8, 0});
         PipeBarrier<PIPE_V>();
-        auto steps = At<int32_t>(256, 192);
+        auto steps = At<int32_t>(ColumnAddr + Tile * 20 + 256, 192);
         DataCopy(steps, lanes, 64);
         Adds(steps[64], lanes, int32_t(64), uint64_t(64), uint8_t(1), {1, 1, 8, 8});
         Adds(steps[128], lanes, int32_t(128), uint64_t(64), uint8_t(1), {1, 1, 8, 8});
@@ -835,13 +824,13 @@ private:
     __aicore__ inline void FillRamp(LocalTensor<int32_t> target, uint32_t elements)
     {
         const uint32_t repeats = (elements + 63) / 64;
-        auto spread = At<int32_t>(1024, ((repeats + 7) / 8) * 64);
-        Brcb(spread, At<int32_t>(256, 192), uint8_t((repeats + 7) / 8),
+        auto spread = At<int32_t>(ColumnAddr + Tile * 20 + 1024, ((repeats + 7) / 8) * 64);
+        Brcb(spread, At<int32_t>(ColumnAddr + Tile * 20 + 256, 192), uint8_t((repeats + 7) / 8),
             BrcbRepeatParams{1, 8});
         PipeBarrier<PIPE_V>();
         Brcb(target, spread, uint8_t(repeats), BrcbRepeatParams{1, 8});
         PipeBarrier<PIPE_V>();
-        Add(target, target, At<int32_t>(0, 64), uint64_t(64), uint8_t(repeats),
+        Add(target, target, At<int32_t>(ColumnAddr + Tile * 20, 64), uint64_t(64), uint8_t(repeats),
             {1, 1, 1, 8, 8, 0});
         PipeBarrier<PIPE_V>();
     }
@@ -951,13 +940,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 20 || PATH == 21 || PATH == 22 || PATH == 23) {
-        PairedBatchCandidateDecode<DT_RAW_PRED,
-            PATH == 20 ? 256 : (PATH == 21 ? 320 : (PATH == 22 ? 1408 : 1664)),
-            PATH == 21, true, true> op;
-        op.Init(raw_pred, priors, decoded, data, nullptr);
-        op.Process();
-    } else if constexpr (PATH == 16 || PATH == 17 || PATH == 18 || PATH == 19) {
+    if constexpr (PATH == 16 || PATH == 17 || PATH == 18 || PATH == 19) {
         TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED,
             PATH == 16 ? 256 : (PATH == 17 ? 320 : (PATH == 18 ? 1408 : 1664)),
