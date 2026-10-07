@@ -257,146 +257,6 @@ private:
     uint32_t batch_, n_, cores_, segments_;
 };
 
-template <typename T, uint32_t Tile, bool Balanced = false>
-class PagedMediumCandidateDecodeFusion {
-    static constexpr uint32_t Pitch = Tile + 8;
-    static constexpr uint32_t Page = 128;
-public:
-    __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
-                               const FireCandidateDecodeFusionTilingData &data)
-    {
-        batch_ = data.batch;
-        n_ = data.candidates;
-        cores_ = data.cores;
-        segments_ = data.segments;
-        raw_.SetGlobalBuffer((__gm__ T *)raw);
-        prior_.SetGlobalBuffer((__gm__ float *)prior);
-        out_.SetGlobalBuffer((__gm__ T *)out);
-        pipe_.InitBuffer(inRaw_, 1, Tile * 6 * sizeof(T));
-        pipe_.InitBuffer(inPrior_, 1, Tile * 5 * sizeof(float));
-        pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
-        pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
-        pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
-        pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
-        pipe_.InitBuffer(ones_, 64 * sizeof(float));
-        pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
-        pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
-        pipe_.InitBuffer(packIndex_, Page * 5 * sizeof(uint32_t));
-        auto r = rawIndex_.Get<int32_t>();
-        auto p = priorIndex_.Get<int32_t>();
-        CreateVecIndex(r, int32_t(0), Tile);
-        CreateVecIndex(p, int32_t(0), Tile);
-        PipeBarrier<PIPE_V>();
-        Muls(r, r, int32_t(24), Tile);
-        Muls(p, p, int32_t(20), Tile);
-        auto seq = packed_.Get<int32_t>();
-        auto row = rawFloat_.Get<int32_t>();
-        auto index = packIndex_.Get<int32_t>();
-        CreateVecIndex(seq, int32_t(0), Page * 5);
-        PipeBarrier<PIPE_V>();
-        Muls(row, seq, int32_t(13108), Page * 5);
-        PipeBarrier<PIPE_V>();
-        ShiftRight(row, row, int32_t(16), Page * 5);
-        Muls(seq, seq, int32_t(4 * Pitch), Page * 5);
-        PipeBarrier<PIPE_V>();
-        Muls(row, row, int32_t(4 - 20 * Pitch), Page * 5);
-        PipeBarrier<PIPE_V>();
-        Add(index, seq, row, Page * 5);
-        Duplicate(ones_.Get<float>(), 1.0f, 64);
-        PipeBarrier<PIPE_V>();
-    }
-
-    __aicore__ inline void Process()
-    {
-        const uint32_t tiles = Balanced ? segments_ : (n_ + Tile - 1) / Tile;
-        for (uint32_t task = GetBlockIdx(); task < batch_ * tiles; task += cores_) {
-            const uint32_t b = task / tiles;
-            const uint32_t start = Balanced ? n_ * (task % tiles) / tiles : (task % tiles) * Tile;
-            const uint32_t count = Balanced ? n_ * ((task % tiles) + 1) / tiles - start : (start + Tile <= n_ ? Tile : n_ - start);
-            auto raw = inRaw_.AllocTensor<T>();
-            auto prior = inPrior_.AllocTensor<float>();
-            DataCopyPad(raw, raw_[(b * n_ + start) * 6],
-                        DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
-                        DataCopyPadExtParams<T>{false, 0, 0, 0});
-            DataCopyPad(prior, prior_[start * 5],
-                        DataCopyExtParams{1, count * 20, 0, 0, 0},
-                        DataCopyPadExtParams<float>{false, 0, 0, 0});
-            inRaw_.EnQue(raw);
-            inPrior_.EnQue(prior);
-            raw = inRaw_.DeQue<T>();
-            prior = inPrior_.DeQue<float>();
-            auto sig = rawFloat_.Get<float>();
-            if constexpr (sizeof(T) == 2) {
-                Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
-            } else {
-                DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
-            }
-            PipeBarrier<PIPE_V>();
-            Muls(sig, sig, -1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
-            Exp(sig, sig, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
-            Adds(sig, sig, 1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
-            Div(sig, ones_.Get<float>(), sig, uint64_t(64),
-                uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
-            PipeBarrier<PIPE_V>();
-            auto c = columns_.Get<float>();
-            const auto ri = rawIndex_.Get<uint32_t>();
-            const auto pi = priorIndex_.Get<uint32_t>();
-            for (uint32_t j = 0; j < 6; ++j)
-                Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
-            for (uint32_t j = 0; j < 5; ++j)
-                Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
-            PipeBarrier<PIPE_V>();
-            Muls(c, c, 2.0f, Pitch * 4);
-            PipeBarrier<PIPE_V>();
-            Adds(c, c, -0.5f, Pitch * 2);
-            Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], Pitch * 2);
-            Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);
-            PipeBarrier<PIPE_V>();
-            Add(c, c, c[6 * Pitch], Pitch * 2);
-            Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], Pitch * 2);
-            PipeBarrier<PIPE_V>();
-            for (uint32_t j = 0; j < 4; ++j)
-                Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
-            PipeBarrier<PIPE_V>();
-            auto packed = packed_.Get<float>();
-            for (uint32_t offset = 0; offset < count; offset += Page) {
-                const uint32_t rows = offset + Page <= count ? Page : count - offset;
-                if (rows == Page)
-                    Gather(packed[offset * 5], c, packIndex_.Get<uint32_t>(), offset * 4,
-                        uint64_t(64), uint8_t(Page * 5 / 64), 8);
-                else
-                    Gather(packed[offset * 5], c, packIndex_.Get<uint32_t>(), offset * 4, rows * 5);
-            }
-            PipeBarrier<PIPE_V>();
-            auto dst = outQueue_.AllocTensor<T>();
-            if constexpr (sizeof(T) == 2) {
-                Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
-            } else {
-                DataCopy(dst, packed, ((count * 5 + 7) / 8) * 8);
-            }
-            outQueue_.EnQue(dst);
-            dst = outQueue_.DeQue<T>();
-            DataCopyPad(out_[(b * n_ + start) * 5], dst,
-                        DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
-            outQueue_.FreeTensor(dst);
-            inRaw_.FreeTensor(raw);
-            inPrior_.FreeTensor(prior);
-        }
-    }
-private:
-    TPipe pipe_;
-    TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
-    TQue<QuePosition::VECOUT, 1> outQueue_;
-    TBuf<TPosition::VECCALC> rawFloat_, columns_, packed_, ones_;
-    TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_;
-    GlobalTensor<T> raw_, out_;
-    GlobalTensor<float> prior_;
-    uint32_t batch_, n_, cores_, segments_;
-};
-
 template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
@@ -605,10 +465,9 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool PagedPack = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
-    static constexpr uint32_t PackRows = PagedPack ? 128 : Tile;
     static constexpr uint32_t Pitch = Tile + 8;
     static constexpr bool Reuse = sizeof(T) == 4;
     static constexpr uint32_t RawBytes = Tile * 6 * sizeof(T);
@@ -644,17 +503,17 @@ public:
         Muls(pi, pi, int32_t(20), HalfTile);
         auto seq = At<int32_t>(ColumnAddr, Pitch * 11);
         auto row = seq[Tile * 5];
-        auto index = At<int32_t>(PackIdxAddr, PackRows * 5);
-        CreateVecIndex(seq, int32_t(0), PackRows * 5);
+        auto index = At<int32_t>(PackIdxAddr, Tile * 5);
+        CreateVecIndex(seq, int32_t(0), Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(row, seq, int32_t(13108), PackRows * 5);
+        Muls(row, seq, int32_t(13108), Tile * 5);
         PipeBarrier<PIPE_V>();
-        ShiftRight(row, row, int32_t(16), PackRows * 5);
-        Muls(seq, seq, int32_t(4 * Pitch), PackRows * 5);
+        ShiftRight(row, row, int32_t(16), Tile * 5);
+        Muls(seq, seq, int32_t(4 * Pitch), Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(row, row, int32_t(4 - 20 * Pitch), PackRows * 5);
+        Muls(row, row, int32_t(4 - 20 * Pitch), Tile * 5);
         PipeBarrier<PIPE_V>();
-        Add(index, seq, row, PackRows * 5);
+        Add(index, seq, row, Tile * 5);
         Duplicate(At<float>(OneAddr, 64), 1.0f, 64);
         PipeBarrier<PIPE_V>();
     }
@@ -775,16 +634,8 @@ private:
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
             else packed = At<float>(FloatAddr, Tile * 6);
-            if constexpr (PagedPack) {
-                for (uint32_t offset = 0; offset < Tile; offset += PackRows) {
-                    const uint32_t rows = offset + PackRows <= Tile ? PackRows : Tile - offset;
-                    Gather(packed[offset * 5], c, At<uint32_t>(PackIdxAddr, PackRows * 5),
-                        offset * 4, uint64_t(64), uint8_t(rows * 5 / 64), 8);
-                }
-            } else {
-                Gather(packed, c, At<uint32_t>(PackIdxAddr, Tile * 5), 0, uint64_t(64),
-                    uint8_t((count * 5 + 63) / 64), 8);
-            }
+            Gather(packed, c, At<uint32_t>(PackIdxAddr, Tile * 5), 0, uint64_t(64),
+                uint8_t((count * 5 + 63) / 64), 8);
             PipeBarrier<PIPE_V>();
             if constexpr (sizeof(T) == 2)
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
@@ -818,13 +669,9 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 11 || PATH == 15) {
-        PagedMediumCandidateDecodeFusion<DT_RAW_PRED, PATH == 11 ? 512 : 576, PATH == 15> op;
-        op.Init(raw_pred, priors, decoded, data);
-        op.Process();
-    } else if constexpr (PATH == 12 || PATH == 13) {
+    if constexpr (PATH == 12 || PATH == 13) {
         TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13, true> op;
+        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 10) {
