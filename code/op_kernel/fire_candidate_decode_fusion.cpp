@@ -681,6 +681,8 @@ public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &d, TPipe *pipe)
     {
+        diagStart_ = GetSystemCycle();
+        diagOut_.SetGlobalBuffer((__gm__ float *)out);
         pipe_ = pipe;
         batch_ = d.batch; n_ = d.candidates; cores_ = d.cores;
         raw_.SetGlobalBuffer((__gm__ T *)raw);
@@ -714,6 +716,9 @@ public:
         Add(index, seq, row, Tile * 5);
         Duplicate(At<float>(OneAddr, 64), 1.0f, 64);
         PipeBarrier<PIPE_V>();
+        PipeBarrier<PIPE_ALL>();
+        diagInit_ = GetSystemCycle() - diagStart_;
+        diagProcessStart_ = GetSystemCycle();
     }
     __aicore__ inline void Process()
     {
@@ -757,6 +762,18 @@ public:
         if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
         if (poolPending_) WaitFlag<HardEvent::MTE3_MTE2>(poolFree_);
         if (rawUsed_) WaitFlag<HardEvent::V_MTE2>(rawFree_);
+        PipeBarrier<PIPE_ALL>();
+        const uint64_t processCycles = GetSystemCycle() - diagProcessStart_;
+        if constexpr (sizeof(T) == 4) {
+            auto values = At<float>(ColumnAddr, 8);
+            values.SetValue(0, float(diagInit_) / 50.0f);
+            values.SetValue(1, float(processCycles) / 50.0f);
+            for (uint32_t i = 2; i < 8; ++i) values.SetValue(i, 0.0f);
+            const int32_t ready = pipe_->FetchEventID(HardEvent::S_MTE3);
+            SetFlag<HardEvent::S_MTE3>(ready);
+            WaitFlag<HardEvent::S_MTE3>(ready);
+            DataCopyPad(diagOut_[GetBlockIdx() * 8], values, DataCopyExtParams{1, 32, 0, 0, 0});
+        }
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_);
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(priorReady_);
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
@@ -854,6 +871,8 @@ private:
             }
     }
 
+    uint64_t diagStart_, diagInit_, diagProcessStart_;
+    GlobalTensor<float> diagOut_;
     TPipe *pipe_;
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
