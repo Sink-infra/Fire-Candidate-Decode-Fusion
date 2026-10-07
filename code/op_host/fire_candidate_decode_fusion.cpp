@@ -84,6 +84,19 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
     }
     if (PATH == 14 && data->batch == 1 &&
         data->candidates / 4 <= platform.GetCoreNumAiv()) PATH = 15;
+    if ((PATH == 12 || PATH == 13) && data->batch % 4 == 0) {
+        uint32_t wideCores = platform.GetCoreNumAiv();
+        const uint32_t groups = (data->candidates + 15) / 16;
+        if (wideCores > groups) wideCores = groups;
+        const uint32_t span = ((groups + wideCores - 1) / wideCores) * 16;
+        if (span >= 80 && span <= 96) {
+            PATH = 16;
+            cores = wideCores;
+        } else if (span > 96 && span <= 128) {
+            PATH = 17;
+            cores = wideCores;
+        }
+    }
     data->cores = cores;
     context->SetBlockDim(cores);
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
