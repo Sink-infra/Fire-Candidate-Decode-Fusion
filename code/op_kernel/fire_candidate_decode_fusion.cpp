@@ -4,7 +4,7 @@
 
 using namespace AscendC;
 
-template <typename T, uint32_t Pack, bool Unroll = false>
+template <typename T, uint32_t Pack, bool Unroll = false, bool MaskGeometry = false>
 class SmallCandidateDecode {
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -15,6 +15,61 @@ public:
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
         Duplicate(Local<float>(5), 1.0f, ((Pack * 24 + 31) / 32) * 8);
+        if constexpr (MaskGeometry) {
+            Local<uint32_t>(6).SetValue(0, 0);
+            Local<uint32_t>(7).SetValue(0, 8);
+            Local<uint32_t>(6).SetValue(1, 4);
+            Local<uint32_t>(7).SetValue(1, 8);
+            Local<uint32_t>(6).SetValue(2, 12);
+            Local<uint32_t>(7).SetValue(2, 8);
+            Local<uint32_t>(6).SetValue(3, 16);
+            Local<uint32_t>(7).SetValue(3, 8);
+            Local<uint32_t>(6).SetValue(4, 0);
+            Local<uint32_t>(7).SetValue(4, 8);
+            Local<uint32_t>(6).SetValue(5, 0);
+            Local<uint32_t>(7).SetValue(5, 8);
+            Local<uint32_t>(6).SetValue(6, 20);
+            Local<uint32_t>(7).SetValue(6, 28);
+            Local<uint32_t>(6).SetValue(7, 24);
+            Local<uint32_t>(7).SetValue(7, 28);
+            Local<uint32_t>(6).SetValue(8, 32);
+            Local<uint32_t>(7).SetValue(8, 28);
+            Local<uint32_t>(6).SetValue(9, 36);
+            Local<uint32_t>(7).SetValue(9, 28);
+            Local<uint32_t>(6).SetValue(10, 20);
+            Local<uint32_t>(7).SetValue(10, 28);
+            Local<uint32_t>(6).SetValue(11, 20);
+            Local<uint32_t>(7).SetValue(11, 28);
+            Local<uint32_t>(6).SetValue(12, 40);
+            Local<uint32_t>(7).SetValue(12, 48);
+            Local<uint32_t>(6).SetValue(13, 44);
+            Local<uint32_t>(7).SetValue(13, 48);
+            Local<uint32_t>(6).SetValue(14, 52);
+            Local<uint32_t>(7).SetValue(14, 48);
+            Local<uint32_t>(6).SetValue(15, 56);
+            Local<uint32_t>(7).SetValue(15, 48);
+            Local<uint32_t>(6).SetValue(16, 40);
+            Local<uint32_t>(7).SetValue(16, 48);
+            Local<uint32_t>(6).SetValue(17, 40);
+            Local<uint32_t>(7).SetValue(17, 48);
+            Local<uint32_t>(6).SetValue(18, 60);
+            Local<uint32_t>(7).SetValue(18, 68);
+            Local<uint32_t>(6).SetValue(19, 64);
+            Local<uint32_t>(7).SetValue(19, 68);
+            Local<uint32_t>(6).SetValue(20, 72);
+            Local<uint32_t>(7).SetValue(20, 68);
+            Local<uint32_t>(6).SetValue(21, 76);
+            Local<uint32_t>(7).SetValue(21, 68);
+            Local<uint32_t>(6).SetValue(22, 60);
+            Local<uint32_t>(7).SetValue(22, 68);
+            Local<uint32_t>(6).SetValue(23, 60);
+            Local<uint32_t>(7).SetValue(23, 68);
+            Duplicate(Local<uint32_t>(10), uint32_t(0), 8);
+            Local<uint32_t>(10).SetValue(0, uint32_t(8255455));
+            SetFlag<HardEvent::S_V>(0);
+            WaitFlag<HardEvent::S_V>(0);
+        }
+
     }
     __aicore__ inline void Process()
     {
@@ -55,7 +110,9 @@ public:
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
             auto result = Local<float>(4);
-            if constexpr (Pack == 4 && Unroll) {
+            if constexpr (MaskGeometry) {
+                DecodeMask(sig, prior, result);
+            } else if constexpr (Pack == 4 && Unroll) {
                 if (count == 4) {
                     DecodeRow<0>(sig, prior, result);
                     DecodeRow<1>(sig, prior, result);
@@ -134,6 +191,36 @@ public:
         }
     }
 private:
+    __aicore__ inline void DecodeMask(LocalTensor<float> sig, LocalTensor<float> prior, LocalTensor<float> result)
+    {
+        sig.SetValue(4, sig.GetValue(4) * sig.GetValue(5));
+        sig.SetValue(10, sig.GetValue(10) * sig.GetValue(11));
+        sig.SetValue(16, sig.GetValue(16) * sig.GetValue(17));
+        sig.SetValue(22, sig.GetValue(22) * sig.GetValue(23));
+        SetFlag<HardEvent::S_V>(0);
+        WaitFlag<HardEvent::S_V>(0);
+        auto g = Local<float>(8);
+        auto stride = Local<float>(9);
+        Gather(g, prior, Local<uint32_t>(6), 0, uint32_t(24));
+        Gather(stride, prior, Local<uint32_t>(7), 0, uint32_t(24));
+        uint64_t xyMask[2] = {uint64_t(798915), 0};
+        uint64_t whMask[2] = {uint64_t(3195660), 0};
+        uint64_t geomMask[2] = {uint64_t(3994575), 0};
+        Muls(sig, sig, 2.0f, geomMask, uint8_t(1), {1, 1, 8, 8});
+        PipeBarrier<PIPE_V>();
+        Adds(sig, sig, -0.5f, xyMask, uint8_t(1), {1, 1, 8, 8});
+        Mul(sig, sig, sig, whMask, uint8_t(1), {1, 1, 1, 8, 8, 8});
+        PipeBarrier<PIPE_V>();
+        Add(sig, sig, g, xyMask, uint8_t(1), {1, 1, 1, 8, 8, 8});
+        Mul(sig, sig, g, whMask, uint8_t(1), {1, 1, 1, 8, 8, 8});
+        PipeBarrier<PIPE_V>();
+        Mul(sig, sig, stride, geomMask, uint8_t(1), {1, 1, 1, 8, 8, 8});
+        PipeBarrier<PIPE_V>();
+        uint64_t selected = 0;
+        GatherMask(result, sig, Local<uint32_t>(10), true, uint32_t(24),
+                   GatherMaskParams{1, 1, 8, 0}, selected);
+        PipeBarrier<PIPE_V>();
+    }
     template <uint32_t Row>
     __aicore__ inline void DecodeRow(LocalTensor<float> sig, LocalTensor<float> prior, LocalTensor<float> result)
     {
@@ -728,7 +815,11 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 14) {
+    if constexpr (PATH == 15) {
+        SmallCandidateDecode<DT_RAW_PRED, 4, false, true> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 14) {
         SmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();

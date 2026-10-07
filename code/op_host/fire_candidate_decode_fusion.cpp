@@ -71,7 +71,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         else if (span > 704 && span <= 832) PATH = 9;
     }
     if (total <= 128 && data->candidates >= 8) {
-        PATH = data->candidates % 4 == 0 ? 14 : 10;
+        PATH = data->candidates % 4 == 0 ? 15 : 10;
         cores = platform.GetCoreNumAiv();
         const uint32_t tasks = data->batch * ((data->candidates + 3) / 4);
         if (cores > tasks) cores = tasks;
