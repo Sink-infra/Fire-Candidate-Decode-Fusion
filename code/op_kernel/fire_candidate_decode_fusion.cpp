@@ -759,6 +759,17 @@ public:
     }
     __aicore__ inline void Process()
     {
+        auto snapshot = At<int32_t>(PackIdxAddr, 8, TPosition::VECOUT);
+        SetFlag<HardEvent::V_MTE3>(outReady_);
+        WaitFlag<HardEvent::V_MTE3>(outReady_);
+        DataCopy(out_[GetBlockIdx() * 16].template ReinterpretCast<int32_t>(), snapshot, 8);
+        SetFlag<HardEvent::MTE3_V>(outFree_);
+        WaitFlag<HardEvent::MTE3_V>(outFree_);
+        pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_);
+        pipe_->ReleaseEventID<HardEvent::MTE2_V>(priorReady_);
+        pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
+        return;
+
         const uint32_t groups = (n_ + 15) / 16;
         const uint32_t begin = (groups * GetBlockIdx() / cores_) * 16;
         uint32_t end = (groups * (GetBlockIdx() + 1) / cores_) * 16;
