@@ -257,7 +257,7 @@ private:
     uint32_t batch_, n_, cores_, segments_;
 };
 
-template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false, bool MergeRaw = false>
+template <typename T, uint32_t Tile, bool Balanced = false, bool CachePrior = false>
 class KernelFireCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
     static constexpr bool Reuse = (Tile == 1024 || CachePrior) && sizeof(T) == 4;
@@ -279,7 +279,7 @@ public:
         pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
         if constexpr (!Reuse) pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
-        pipe_.InitBuffer(rawIndex_, (MergeRaw ? Pitch * 6 : Tile) * sizeof(uint32_t));
+        pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(packIndex_, Tile * 5 * sizeof(uint32_t));
         auto r = rawIndex_.Get<int32_t>();
@@ -289,13 +289,6 @@ public:
         PipeBarrier<PIPE_V>();
         Muls(r, r, int32_t(24), Tile);
         Muls(p, p, int32_t(20), Tile);
-        if constexpr (MergeRaw) {
-            Duplicate(r[Tile], int32_t(0), 8);
-            PipeBarrier<PIPE_V>();
-            for (uint32_t j = 1; j < 6; ++j)
-                Adds(r[j * Pitch], r, int32_t(j * 4), Pitch);
-        }
-
         LocalTensor<int32_t> seq, row;
         if constexpr (Reuse) {
             seq = columns_.Get<int32_t>();
@@ -368,11 +361,8 @@ private:
             auto c = columns_.Get<float>();
             const auto ri = rawIndex_.Get<uint32_t>();
             const auto pi = priorIndex_.Get<uint32_t>();
-            if constexpr (MergeRaw) Gather(c, sig, ri, uint32_t(0), Pitch * 6);
-            else {
             for (uint32_t j = 0; j < 6; ++j)
                 Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
-            }
             if constexpr (!CachePrior) {
             for (uint32_t j = 0; j < 5; ++j)
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
@@ -674,11 +664,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 10 || PATH == 11) {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, PATH == 10 ? 768 : 1024, false, true, true> op;
-        op.Init(raw_pred, priors, decoded, data);
-        op.Process();
-    } else if constexpr (PATH == 8 || PATH == 9) {
+    if constexpr (PATH == 8 || PATH == 9) {
         TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 8 ? 1408 : 1664> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
