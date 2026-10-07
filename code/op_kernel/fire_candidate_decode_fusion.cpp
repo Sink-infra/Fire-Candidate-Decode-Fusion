@@ -275,7 +275,7 @@ public:
         pipe_.InitBuffer(inRaw_, 1, Tile * 6 * sizeof(T));
         pipe_.InitBuffer(inPrior_, 1, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
-        if constexpr (sizeof(T) == 2) pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
+        pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
         pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
         pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
@@ -290,9 +290,7 @@ public:
         Muls(r, r, int32_t(24), Tile);
         Muls(p, p, int32_t(20), Tile);
         auto seq = packed_.Get<int32_t>();
-        LocalTensor<int32_t> row;
-        if constexpr (sizeof(T) == 4) row = columns_.Get<int32_t>();
-        else row = rawFloat_.Get<int32_t>();
+        auto row = rawFloat_.Get<int32_t>();
         auto index = packIndex_.Get<int32_t>();
         CreateVecIndex(seq, int32_t(0), Page * 5);
         PipeBarrier<PIPE_V>();
@@ -327,12 +325,11 @@ public:
             inPrior_.EnQue(prior);
             raw = inRaw_.DeQue<T>();
             prior = inPrior_.DeQue<float>();
-            LocalTensor<float> sig;
+            auto sig = rawFloat_.Get<float>();
             if constexpr (sizeof(T) == 2) {
-                sig = rawFloat_.Get<float>();
                 Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
             } else {
-                sig = raw;
+                DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             }
             PipeBarrier<PIPE_V>();
             Muls(sig, sig, -1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
