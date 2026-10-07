@@ -4,7 +4,176 @@
 
 using namespace AscendC;
 
-template <typename T, uint32_t Pack>
+template <typename T, uint32_t Pack, bool Unroll = false>
+class SingleTaskSmallCandidateDecode {
+public:
+    __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
+                               const FireCandidateDecodeFusionTilingData &d)
+    {
+
+        raw_.SetGlobalBuffer((__gm__ T *)raw);
+        prior_.SetGlobalBuffer((__gm__ float *)prior);
+        out_.SetGlobalBuffer((__gm__ T *)out);
+        Duplicate(Local<float>(5), 1.0f, ((Pack * 24 + 31) / 32) * 8);
+    }
+    __aicore__ inline void Process()
+    {
+        {
+            const uint32_t task = GetBlockIdx();
+            const uint32_t i = task * Pack;
+            constexpr uint32_t count = Pack;
+            auto raw = Local<T>(0);
+            auto prior = Local<float>(1);
+            if constexpr (Pack == 8) {
+                DataCopy(raw, raw_[i * 6], count * 6);
+                DataCopy(prior, prior_[i * 5], count * 5);
+            } else {
+            DataCopyPad(raw, raw_[i * 6],
+                DataCopyExtParams{1, count * 6 * uint32_t(sizeof(T)), 0, 0, 0},
+                DataCopyPadExtParams<T>{false, 0, 0, 0});
+            DataCopyPad(prior, prior_[i * 5],
+                DataCopyExtParams{1, count * 20, 0, 0, 0},
+                DataCopyPadExtParams<float>{false, 0, 0, 0});
+            }
+            constexpr uint32_t mv = 0;
+            SetFlag<HardEvent::MTE2_V>(mv);
+            WaitFlag<HardEvent::MTE2_V>(mv);
+            auto sig = Local<float>(3);
+            if constexpr (sizeof(T) == 2)
+                Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
+            else
+                DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
+            PipeBarrier<PIPE_V>();
+            Muls(sig, sig, -1.0f, count * 6);
+            PipeBarrier<PIPE_V>();
+            Exp(sig, sig, count * 6);
+            PipeBarrier<PIPE_V>();
+            Adds(sig, sig, 1.0f, count * 6);
+            PipeBarrier<PIPE_V>();
+            Div(sig, Local<float>(5), sig, count * 6);
+            constexpr uint32_t vs = 0;
+            SetFlag<HardEvent::V_S>(vs);
+            WaitFlag<HardEvent::V_S>(vs);
+            auto result = Local<float>(4);
+            if constexpr (Pack == 4 && Unroll) {
+                if (count == 4) {
+                    DecodeRow<0>(sig, prior, result);
+                    DecodeRow<1>(sig, prior, result);
+                    DecodeRow<2>(sig, prior, result);
+                    DecodeRow<3>(sig, prior, result);
+                } else {
+            for (uint32_t row = 0; row < count; ++row) {
+            const float stride = prior.GetValue(row * 5 + 2);
+            float x = 2.0f * sig.GetValue(row * 6 + 0);
+            x = x - 0.5f;
+            x = x + prior.GetValue(row * 5 + 0);
+            x = x * stride;
+            float y = 2.0f * sig.GetValue(row * 6 + 1);
+            y = y - 0.5f;
+            y = y + prior.GetValue(row * 5 + 1);
+            y = y * stride;
+            float w = 2.0f * sig.GetValue(row * 6 + 2);
+            w = w * w;
+            w = w * prior.GetValue(row * 5 + 3);
+            w = w * stride;
+            float h = 2.0f * sig.GetValue(row * 6 + 3);
+            h = h * h;
+            h = h * prior.GetValue(row * 5 + 4);
+            h = h * stride;
+            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
+            result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
+            result.SetValue(row * 5 + 4, score);
+            }
+                }
+            } else {
+            for (uint32_t row = 0; row < count; ++row) {
+            const float stride = prior.GetValue(row * 5 + 2);
+            float x = 2.0f * sig.GetValue(row * 6 + 0);
+            x = x - 0.5f;
+            x = x + prior.GetValue(row * 5 + 0);
+            x = x * stride;
+            float y = 2.0f * sig.GetValue(row * 6 + 1);
+            y = y - 0.5f;
+            y = y + prior.GetValue(row * 5 + 1);
+            y = y * stride;
+            float w = 2.0f * sig.GetValue(row * 6 + 2);
+            w = w * w;
+            w = w * prior.GetValue(row * 5 + 3);
+            w = w * stride;
+            float h = 2.0f * sig.GetValue(row * 6 + 3);
+            h = h * h;
+            h = h * prior.GetValue(row * 5 + 4);
+            h = h * stride;
+            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
+            result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
+            result.SetValue(row * 5 + 4, score);
+            }
+            }
+            constexpr uint32_t sv = 0;
+            SetFlag<HardEvent::S_V>(sv);
+            WaitFlag<HardEvent::S_V>(sv);
+            auto dst = Local<T>(2);
+            if constexpr (sizeof(T) == 2)
+                Cast(dst, result, RoundMode::CAST_RINT, count * 5);
+            else
+                DataCopy(dst, result, ((count * 5 + 7) / 8) * 8);
+            constexpr uint32_t vm = 0;
+            SetFlag<HardEvent::V_MTE3>(vm);
+            WaitFlag<HardEvent::V_MTE3>(vm);
+            if constexpr (Pack == 8 && sizeof(T) == 4)
+                DataCopy(out_[i * 5], dst, count * 5);
+            else {
+            DataCopyPad(out_[i * 5], dst,
+                DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
+            }
+            constexpr uint32_t om = 0;
+            SetFlag<HardEvent::MTE3_V>(om);
+            WaitFlag<HardEvent::MTE3_V>(om);
+        }
+    }
+private:
+    template <uint32_t Row>
+    __aicore__ inline void DecodeRow(LocalTensor<float> sig, LocalTensor<float> prior, LocalTensor<float> result)
+    {
+        constexpr uint32_t row = Row;
+            const float stride = prior.GetValue(row * 5 + 2);
+            float x = 2.0f * sig.GetValue(row * 6 + 0);
+            x = x - 0.5f;
+            x = x + prior.GetValue(row * 5 + 0);
+            x = x * stride;
+            float y = 2.0f * sig.GetValue(row * 6 + 1);
+            y = y - 0.5f;
+            y = y + prior.GetValue(row * 5 + 1);
+            y = y * stride;
+            float w = 2.0f * sig.GetValue(row * 6 + 2);
+            w = w * w;
+            w = w * prior.GetValue(row * 5 + 3);
+            w = w * stride;
+            float h = 2.0f * sig.GetValue(row * 6 + 3);
+            h = h * h;
+            h = h * prior.GetValue(row * 5 + 4);
+            h = h * stride;
+            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
+            result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
+            result.SetValue(row * 5 + 4, score);
+    }
+    template <typename U>
+    __aicore__ inline LocalTensor<U> Local(uint32_t slot)
+    {
+        constexpr uint32_t Bytes = ((Pack * 24 + 31) / 32) * 32;
+        const TPosition pos = slot < 2 ? TPosition::VECIN :
+            (slot == 2 ? TPosition::VECOUT : TPosition::VECCALC);
+        return LocalTensor<U>(pos, slot * Bytes, Bytes / sizeof(U));
+    }
+    GlobalTensor<T> raw_, out_;
+    GlobalTensor<float> prior_;
+};
+
+
+template <typename T, uint32_t Pack, bool Unroll = false>
 class SmallCandidateDecode {
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -55,6 +224,13 @@ public:
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
             auto result = Local<float>(4);
+            if constexpr (Pack == 4 && Unroll) {
+                if (count == 4) {
+                    DecodeRow<0>(sig, prior, result);
+                    DecodeRow<1>(sig, prior, result);
+                    DecodeRow<2>(sig, prior, result);
+                    DecodeRow<3>(sig, prior, result);
+                } else {
             for (uint32_t row = 0; row < count; ++row) {
             const float stride = prior.GetValue(row * 5 + 2);
             float x = 2.0f * sig.GetValue(row * 6 + 0);
@@ -77,6 +253,32 @@ public:
             result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
             result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
             result.SetValue(row * 5 + 4, score);
+            }
+                }
+            } else {
+            for (uint32_t row = 0; row < count; ++row) {
+            const float stride = prior.GetValue(row * 5 + 2);
+            float x = 2.0f * sig.GetValue(row * 6 + 0);
+            x = x - 0.5f;
+            x = x + prior.GetValue(row * 5 + 0);
+            x = x * stride;
+            float y = 2.0f * sig.GetValue(row * 6 + 1);
+            y = y - 0.5f;
+            y = y + prior.GetValue(row * 5 + 1);
+            y = y * stride;
+            float w = 2.0f * sig.GetValue(row * 6 + 2);
+            w = w * w;
+            w = w * prior.GetValue(row * 5 + 3);
+            w = w * stride;
+            float h = 2.0f * sig.GetValue(row * 6 + 3);
+            h = h * h;
+            h = h * prior.GetValue(row * 5 + 4);
+            h = h * stride;
+            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
+            result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
+            result.SetValue(row * 5 + 4, score);
+            }
             }
             constexpr uint32_t sv = 0;
             SetFlag<HardEvent::S_V>(sv);
@@ -101,6 +303,32 @@ public:
         }
     }
 private:
+    template <uint32_t Row>
+    __aicore__ inline void DecodeRow(LocalTensor<float> sig, LocalTensor<float> prior, LocalTensor<float> result)
+    {
+        constexpr uint32_t row = Row;
+            const float stride = prior.GetValue(row * 5 + 2);
+            float x = 2.0f * sig.GetValue(row * 6 + 0);
+            x = x - 0.5f;
+            x = x + prior.GetValue(row * 5 + 0);
+            x = x * stride;
+            float y = 2.0f * sig.GetValue(row * 6 + 1);
+            y = y - 0.5f;
+            y = y + prior.GetValue(row * 5 + 1);
+            y = y * stride;
+            float w = 2.0f * sig.GetValue(row * 6 + 2);
+            w = w * w;
+            w = w * prior.GetValue(row * 5 + 3);
+            w = w * stride;
+            float h = 2.0f * sig.GetValue(row * 6 + 3);
+            h = h * h;
+            h = h * prior.GetValue(row * 5 + 4);
+            h = h * stride;
+            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
+            result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
+            result.SetValue(row * 5 + 4, score);
+    }
     template <typename U>
     __aicore__ inline LocalTensor<U> Local(uint32_t slot)
     {
@@ -465,7 +693,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -478,7 +706,9 @@ class PairedBatchCandidateDecode {
     static constexpr uint32_t OneAddr = ColumnAddr + Pitch * 44;
     static constexpr uint32_t RawIdxAddr = OneAddr + 256;
     static constexpr uint32_t PriorIdxAddr = RawIdxAddr + Tile * 4;
-    static constexpr uint32_t PackIdxAddr = PriorIdxAddr + HalfTile * 4;
+    static constexpr uint32_t PriorRows = FastRamp ? ((HalfTile + 63) / 64) * 64 : HalfTile;
+    static constexpr uint32_t PackIdxAddr = PriorIdxAddr + PriorRows * 4;
+    static constexpr uint32_t RampCacheAddr = RowScratch ? ColumnAddr + Tile * 20 : 0;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &d, TPipe *pipe)
@@ -496,15 +726,22 @@ public:
         poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
         auto ri = At<int32_t>(RawIdxAddr, Tile);
         auto pi = At<int32_t>(PriorIdxAddr, HalfTile);
+        if constexpr (FastRamp) {
+            BuildRampCache();
+            FillRamp(ri, Tile);
+            FillRamp(At<int32_t>(PriorIdxAddr, PriorRows), PriorRows);
+        } else {
         CreateVecIndex(ri, int32_t(0), Tile);
         CreateVecIndex(pi, int32_t(0), HalfTile);
+        }
         PipeBarrier<PIPE_V>();
         Muls(ri, ri, int32_t(24), Tile);
         Muls(pi, pi, int32_t(20), HalfTile);
         auto seq = At<int32_t>(ColumnAddr, Pitch * 11);
         auto row = seq[Tile * 5];
         auto index = At<int32_t>(PackIdxAddr, Tile * 5);
-        CreateVecIndex(seq, int32_t(0), Tile * 5);
+        if constexpr (FastRamp) FillRamp(seq, Tile * 5);
+        else CreateVecIndex(seq, int32_t(0), Tile * 5);
         PipeBarrier<PIPE_V>();
         Muls(row, seq, int32_t(13108), Tile * 5);
         PipeBarrier<PIPE_V>();
@@ -516,6 +753,10 @@ public:
         Add(index, seq, row, Tile * 5);
         Duplicate(At<float>(OneAddr, 64), 1.0f, 64);
         PipeBarrier<PIPE_V>();
+        if constexpr (FastRamp && !RowScratch) {
+            SetFlag<HardEvent::V_MTE2>(rawFree_);
+            WaitFlag<HardEvent::V_MTE2>(rawFree_);
+        }
     }
     __aicore__ inline void Process()
     {
@@ -536,9 +777,14 @@ public:
             SetFlag<HardEvent::MTE2_V>(priorReady_);
             WaitFlag<HardEvent::MTE2_V>(priorReady_);
             auto c = At<float>(ColumnAddr, Pitch * 11);
-            for (uint32_t j = 0; j < 5; ++j)
-                Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
-                    j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
+            for (uint32_t j = 0; j < 5; ++j) {
+                if constexpr (CounterPrior)
+                    Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
+                        j * 4, count);
+                else
+                    Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
+                        j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
+            }
             PipeBarrier<PIPE_V>();
             for (uint32_t j = 0; j < 5; ++j)
                 DataCopy(c[(j + 6) * Pitch + HalfTile], c[(j + 6) * Pitch], HalfTile);
@@ -558,6 +804,41 @@ public:
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
     }
 private:
+    __aicore__ inline void BuildRampCache()
+    {
+        auto seed = At<int32_t>(OneAddr, 8);
+        for (uint32_t i = 0; i < 8; ++i) seed.SetValue(i, int32_t(i));
+        const auto ready = pipe_->FetchEventID(HardEvent::S_V);
+        SetFlag<HardEvent::S_V>(ready);
+        WaitFlag<HardEvent::S_V>(ready);
+        auto lanes = At<int32_t>(RampCacheAddr, 64);
+        Brcb(lanes, seed, uint8_t(1), BrcbRepeatParams{1, 8});
+        PipeBarrier<PIPE_V>();
+        Muls(lanes, lanes, int32_t(8), 64);
+        PipeBarrier<PIPE_V>();
+        Add(lanes, lanes, seed, uint64_t(64), uint8_t(1), {1, 1, 0, 8, 8, 0});
+        PipeBarrier<PIPE_V>();
+        auto steps = At<int32_t>(RampCacheAddr + 256, 192);
+        DataCopy(steps, lanes, 64);
+        Adds(steps[64], lanes, int32_t(64), uint64_t(64), uint8_t(1), {1, 1, 8, 8});
+        Adds(steps[128], lanes, int32_t(128), uint64_t(64), uint8_t(1), {1, 1, 8, 8});
+        PipeBarrier<PIPE_V>();
+        Muls(steps, steps, int32_t(64), 192);
+        PipeBarrier<PIPE_V>();
+    }
+    __aicore__ inline void FillRamp(LocalTensor<int32_t> target, uint32_t elements)
+    {
+        const uint32_t repeats = (elements + 63) / 64;
+        auto spread = At<int32_t>(RampCacheAddr + 1024, ((repeats + 7) / 8) * 64);
+        Brcb(spread, At<int32_t>(RampCacheAddr + 256, 192), uint8_t((repeats + 7) / 8),
+            BrcbRepeatParams{1, 8});
+        PipeBarrier<PIPE_V>();
+        Brcb(target, spread, uint8_t(repeats), BrcbRepeatParams{1, 8});
+        PipeBarrier<PIPE_V>();
+        Add(target, target, At<int32_t>(RampCacheAddr, 64), uint64_t(64), uint8_t(repeats),
+            {1, 1, 1, 8, 8, 0});
+        PipeBarrier<PIPE_V>();
+    }
     template <typename U>
     __aicore__ inline LocalTensor<U> At(uint32_t addr, uint32_t count, TPosition pos = TPosition::VECCALC)
     {
@@ -664,7 +945,26 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 10) {
+    if constexpr (PATH == 18) {
+        TPipe pipe;
+        PairedBatchCandidateDecode<DT_RAW_PRED, 1408, false, true,
+            sizeof(DT_RAW_PRED) == 4> op;
+        op.Init(raw_pred, priors, decoded, data, &pipe);
+        op.Process();
+    } else if constexpr (PATH == 15) {
+        SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 14) {
+        SmallCandidateDecode<DT_RAW_PRED, 4, true> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 12 || PATH == 13) {
+        TPipe pipe;
+        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13> op;
+        op.Init(raw_pred, priors, decoded, data, &pipe);
+        op.Process();
+    } else if constexpr (PATH == 10) {
         SmallCandidateDecode<DT_RAW_PRED, 4> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
