@@ -465,7 +465,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile>
+template <typename T, uint32_t Tile, bool CounterPrior = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -536,9 +536,14 @@ public:
             SetFlag<HardEvent::MTE2_V>(priorReady_);
             WaitFlag<HardEvent::MTE2_V>(priorReady_);
             auto c = At<float>(ColumnAddr, Pitch * 11);
-            for (uint32_t j = 0; j < 5; ++j)
-                Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
-                    j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
+            for (uint32_t j = 0; j < 5; ++j) {
+                if constexpr (CounterPrior)
+                    Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
+                        j * 4, count);
+                else
+                    Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
+                        j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
+            }
             PipeBarrier<PIPE_V>();
             for (uint32_t j = 0; j < 5; ++j)
                 DataCopy(c[(j + 6) * Pitch + HalfTile], c[(j + 6) * Pitch], HalfTile);
@@ -664,7 +669,12 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 10) {
+    if constexpr (PATH == 12 || PATH == 13) {
+        TPipe pipe;
+        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13> op;
+        op.Init(raw_pred, priors, decoded, data, &pipe);
+        op.Process();
+    } else if constexpr (PATH == 10) {
         SmallCandidateDecode<DT_RAW_PRED, 4> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
