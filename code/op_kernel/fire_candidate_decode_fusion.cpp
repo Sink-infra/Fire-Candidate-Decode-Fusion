@@ -265,7 +265,6 @@ public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
     {
-        const int64_t initStart = GetSystemCycle();
         batch_ = data.batch;
         n_ = data.candidates;
         cores_ = data.cores;
@@ -305,8 +304,6 @@ public:
         Add(index, seq, row, Page * 5);
         Duplicate(ones_.Get<float>(), 1.0f, 64);
         PipeBarrier<PIPE_V>();
-        PipeBarrier<PIPE_ALL>();
-        initTicks_ = int32_t(GetSystemCycle() - initStart);
     }
 
     __aicore__ inline void Process()
@@ -388,21 +385,8 @@ public:
             inRaw_.FreeTensor(raw);
             inPrior_.FreeTensor(prior);
         }
-        if constexpr (sizeof(T) == 4) {
-            PipeBarrier<PIPE_ALL>();
-            auto values = packed_.Get<float>();
-            values.SetValue(0, float(initTicks_) / 50.0f);
-            for (uint32_t j = 1; j < 8; ++j) values.SetValue(j, 0.0f);
-            const int32_t ready = pipe_.FetchEventID(HardEvent::S_MTE3);
-            SetFlag<HardEvent::S_MTE3>(ready);
-            WaitFlag<HardEvent::S_MTE3>(ready);
-            const uint32_t b = GetBlockIdx() / tiles;
-            const uint32_t start = Balanced ? n_ * (GetBlockIdx() % tiles) / tiles : (GetBlockIdx() % tiles) * Tile;
-            DataCopyPad(out_[(b * n_ + start) * 5], values, DataCopyExtParams{1, 32, 0, 0, 0});
-        }
     }
 private:
-    int32_t initTicks_;
     TPipe pipe_;
     TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
     TQue<QuePosition::VECOUT, 1> outQueue_;
