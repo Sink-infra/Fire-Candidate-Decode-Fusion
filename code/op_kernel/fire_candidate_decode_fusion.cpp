@@ -693,7 +693,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool AutoSync = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -726,24 +726,24 @@ public:
         auto pi = At<int32_t>(PriorIdxAddr, HalfTile);
         CreateVecIndex(ri, int32_t(0), Tile);
         CreateVecIndex(pi, int32_t(0), HalfTile);
-        if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+        PipeBarrier<PIPE_V>();
         Muls(ri, ri, int32_t(24), Tile);
         Muls(pi, pi, int32_t(20), HalfTile);
         auto seq = At<int32_t>(ColumnAddr, Pitch * 11);
         auto row = seq[Tile * 5];
         auto index = At<int32_t>(PackIdxAddr, Tile * 5);
         CreateVecIndex(seq, int32_t(0), Tile * 5);
-        if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+        PipeBarrier<PIPE_V>();
         Muls(row, seq, int32_t(13108), Tile * 5);
-        if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+        PipeBarrier<PIPE_V>();
         ShiftRight(row, row, int32_t(16), Tile * 5);
         Muls(seq, seq, int32_t(4 * Pitch), Tile * 5);
-        if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+        PipeBarrier<PIPE_V>();
         Muls(row, row, int32_t(4 - 20 * Pitch), Tile * 5);
-        if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+        PipeBarrier<PIPE_V>();
         Add(index, seq, row, Tile * 5);
         Duplicate(At<float>(OneAddr, 64), 1.0f, 64);
-        if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+        PipeBarrier<PIPE_V>();
     }
     __aicore__ inline void Process()
     {
@@ -772,10 +772,10 @@ public:
                     Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
                         j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             }
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             for (uint32_t j = 0; j < 5; ++j)
                 DataCopy(c[(j + 6) * Pitch + HalfTile], c[(j + 6) * Pitch], HalfTile);
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             LoadRaw(0, start, count);
             for (uint32_t b = 0; b < batch_; b += 2) {
                 WaitFlag<HardEvent::MTE2_V>(rawReady_);
@@ -828,35 +828,35 @@ private:
                     DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             }
             if constexpr (!Reuse) ReleaseRawAndPrefetch(b, start, validCount);
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             Muls(sig, sig, -1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             Exp(sig, sig, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             Adds(sig, sig, 1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             Div(sig, At<float>(OneAddr, 64), sig, uint64_t(64),
                 uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             auto c = At<float>(ColumnAddr, Pitch * 11);
             const auto ri = At<uint32_t>(RawIdxAddr, Tile);
 
             for (uint32_t j = 0; j < 6; ++j)
                 Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             if constexpr (Reuse) ReleaseRawAndPrefetch(b, start, validCount);
             Muls(c, c, 2.0f, Pitch * 4);
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             Adds(c, c, -0.5f, Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], Pitch * 2);
             Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             Add(c, c, c[6 * Pitch], Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], Pitch * 2);
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
             auto dst = At<T>(SharedAddr, Tile * 5, TPosition::VECOUT);
             LocalTensor<float> packed;
@@ -864,7 +864,7 @@ private:
             else packed = At<float>(FloatAddr, Tile * 6);
             Gather(packed, c, At<uint32_t>(PackIdxAddr, Tile * 5), 0, uint64_t(64),
                 uint8_t((count * 5 + 63) / 64), 8);
-            if constexpr (!AutoSync) PipeBarrier<PIPE_V>();
+            PipeBarrier<PIPE_V>();
             if constexpr (sizeof(T) == 2)
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
             else if constexpr (!Reuse)
@@ -897,17 +897,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 16 || PATH == 17) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 16 ? 256 : 320, PATH == 17, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
-    } else if constexpr (PATH == 18 || PATH == 19) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 18 ? 1408 : 1664, false, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
-    } else if constexpr (PATH == 15) {
+    if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
