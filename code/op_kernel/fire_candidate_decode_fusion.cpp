@@ -766,8 +766,8 @@ public:
         const uint64_t processCycles = GetSystemCycle() - diagProcessStart_;
         if constexpr (sizeof(T) == 4) {
             auto values = At<float>(ColumnAddr, 8);
-            values.SetValue(0, float(diagInit_) / 50.0f);
-            values.SetValue(1, float(processCycles) / 50.0f);
+            values.SetValue(0, float(int32_t(diagInit_)) / 50.0f);
+            values.SetValue(1, float(int32_t(processCycles)) / 50.0f);
             for (uint32_t i = 2; i < 8; ++i) values.SetValue(i, 0.0f);
             const int32_t ready = pipe_->FetchEventID(HardEvent::S_MTE3);
             SetFlag<HardEvent::S_MTE3>(ready);
