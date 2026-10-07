@@ -29,6 +29,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
     const uint32_t total = data->batch * data->candidates;
     uint32_t PATH = total <= 128 ? (total <= platform.GetCoreNumAiv() ? 0 : 3) : (total <= 65536 ? 2 : 1);
     data->segments = 0;
+    if ((PATH == 0 || PATH == 3) && dtype == ge::DT_FLOAT16 && data->candidates % 8 == 0) PATH = 5;
     if (PATH == 2) {
         cores = platform.GetCoreNumAiv();
         if (cores > 32) cores = 32;
@@ -41,6 +42,11 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
             data->segments = segments;
             cores = segments * data->batch;
         }
+    }
+    if (PATH == 5) {
+        cores = platform.GetCoreNumAiv();
+        const uint32_t tasks = data->batch * (data->candidates / 8);
+        if (cores > tasks) cores = tasks;
     }
     if (PATH == 3) {
         cores = platform.GetCoreNumAiv();
@@ -57,6 +63,18 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         if (cores > groups) cores = groups;
         const uint32_t span = ((groups + cores - 1) / cores) * 8;
         PATH = span <= 768 ? 6 : 7;
+    }
+    if ((PATH == 6 || PATH == 7) && dtype == ge::DT_FLOAT16 && data->batch % 2 == 0) {
+        const uint32_t groups = (data->candidates + 15) / 16;
+        const uint32_t span = ((groups + cores - 1) / cores) * 16;
+        if (span >= 528 && span <= 704) PATH = 8;
+        else if (span > 704 && span <= 832) PATH = 9;
+    }
+    if (total <= 128 && data->candidates >= 8) {
+        PATH = 10;
+        cores = platform.GetCoreNumAiv();
+        const uint32_t tasks = data->batch * ((data->candidates + 3) / 4);
+        if (cores > tasks) cores = tasks;
     }
     data->cores = cores;
     context->SetBlockDim(cores);
