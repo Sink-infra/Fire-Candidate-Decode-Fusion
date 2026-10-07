@@ -693,7 +693,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool SingleSpan = false, bool TrimFinal = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -712,7 +712,7 @@ public:
                                const FireCandidateDecodeFusionTilingData &d, TPipe *pipe)
     {
         pipe_ = pipe;
-        batch_ = SingleSpan ? 4 : d.batch; n_ = d.candidates; cores_ = d.cores;
+        batch_ = d.batch; n_ = d.candidates; cores_ = d.cores;
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
@@ -721,7 +721,7 @@ public:
         rawFree_ = pipe->AllocEventID<HardEvent::V_MTE2>();
         outReady_ = pipe->FetchEventID(HardEvent::V_MTE3);
         outFree_ = pipe->FetchEventID(HardEvent::MTE3_V);
-        if constexpr (!TrimFinal) poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
+        poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
         auto ri = At<int32_t>(RawIdxAddr, Tile);
         auto pi = At<int32_t>(PriorIdxAddr, HalfTile);
         CreateVecIndex(ri, int32_t(0), Tile);
@@ -751,41 +751,6 @@ public:
         const uint32_t begin = (groups * GetBlockIdx() / cores_) * 16;
         uint32_t end = (groups * (GetBlockIdx() + 1) / cores_) * 16;
         if (end > n_) end = n_;
-        if constexpr (SingleSpan) {
-            if (end > begin) {
-                const uint32_t start = begin;
-                const uint32_t count = end - begin;
-            if (poolPending_) {
-                WaitFlag<HardEvent::MTE3_MTE2>(poolFree_);
-                poolPending_ = false;
-            }
-            auto prior = At<float>(SharedAddr, HalfTile * 5, TPosition::VECIN);
-            DataCopyPad(prior, prior_[start * 5],
-                DataCopyExtParams{1, count * 20, 0, 0, 0},
-                DataCopyPadExtParams<float>{false, 0, 0, 0});
-            SetFlag<HardEvent::MTE2_V>(priorReady_);
-            WaitFlag<HardEvent::MTE2_V>(priorReady_);
-            auto c = At<float>(ColumnAddr, Pitch * 11);
-            for (uint32_t j = 0; j < 5; ++j) {
-                if constexpr (CounterPrior)
-                    Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
-                        j * 4, count);
-                else
-                    Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
-                        j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
-            }
-            PipeBarrier<PIPE_V>();
-            for (uint32_t j = 0; j < 5; ++j)
-                DataCopy(c[(j + 6) * Pitch + HalfTile], c[(j + 6) * Pitch], HalfTile);
-            PipeBarrier<PIPE_V>();
-            LoadRaw(0, start, count);
-                WaitFlag<HardEvent::MTE2_V>(rawReady_);
-                auto raw = At<T>(0, Tile * 6, TPosition::VECIN);
-                Compute(raw, prior, 0, start, count);
-                WaitFlag<HardEvent::MTE2_V>(rawReady_);
-                Compute(raw, prior, 2, start, count);
-            }
-        } else {
         for (uint32_t start = begin; start < end; start += HalfTile) {
             const uint32_t count = start + HalfTile <= end ? HalfTile : end - start;
             if (poolPending_) {
@@ -818,12 +783,9 @@ public:
                 Compute(raw, prior, b, start, count);
             }
         }
-        }
         if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
         if (poolPending_) WaitFlag<HardEvent::MTE3_MTE2>(poolFree_);
-        if constexpr (!TrimFinal) {
         if (rawUsed_) WaitFlag<HardEvent::V_MTE2>(rawFree_);
-        }
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_);
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(priorReady_);
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
@@ -848,15 +810,8 @@ private:
     }
     __aicore__ inline void ReleaseRawAndPrefetch(uint32_t b, uint32_t start, uint32_t count)
     {
-        if constexpr (TrimFinal) {
-            if (b + 2 < 4) {
-                SetFlag<HardEvent::V_MTE2>(rawFree_);
-                LoadRaw(b + 2, start, count);
-            }
-        } else {
-            SetFlag<HardEvent::V_MTE2>(rawFree_);
-            if (b + 2 < (SingleSpan ? 4 : batch_)) LoadRaw(b + 2, start, count);
-        }
+        SetFlag<HardEvent::V_MTE2>(rawFree_);
+        if (b + 2 < batch_) LoadRaw(b + 2, start, count);
     }
     __aicore__ inline void Compute(LocalTensor<T> raw, LocalTensor<float> prior,
                                   uint32_t b, uint32_t start, uint32_t validCount)
@@ -922,11 +877,9 @@ private:
                 DataCopyExtParams{2, bytes, localGap, (n_ - validCount) * 5 * uint32_t(sizeof(T)), 0});
             SetFlag<HardEvent::MTE3_V>(outFree_);
             outPending_ = true;
-            if constexpr (!TrimFinal) {
-                if (b + 2 >= (SingleSpan ? 4 : batch_)) {
-                    SetFlag<HardEvent::MTE3_MTE2>(poolFree_);
-                    poolPending_ = true;
-                }
+            if (b + 2 >= batch_) {
+                SetFlag<HardEvent::MTE3_MTE2>(poolFree_);
+                poolPending_ = true;
             }
     }
 
@@ -944,17 +897,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 18 || PATH == 19) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 18 ? 256 : 320, PATH == 19, true, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
-    } else if constexpr (PATH == 16 || PATH == 17) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 16 ? 256 : 320, PATH == 17, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
-    } else if constexpr (PATH == 15) {
+    if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
