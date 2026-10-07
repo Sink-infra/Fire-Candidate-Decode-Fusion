@@ -693,10 +693,10 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, uint32_t Padding = 8>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
-    static constexpr uint32_t Pitch = Tile + Padding;
+    static constexpr uint32_t Pitch = Tile + 8;
     static constexpr bool Reuse = sizeof(T) == 4;
     static constexpr uint32_t RawBytes = Tile * 6 * sizeof(T);
     static constexpr uint32_t FloatAddr = RawBytes;
@@ -944,7 +944,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED,
             PATH == 16 ? 256 : (PATH == 17 ? 320 : (PATH == 18 ? 1408 : 1664)),
-            PATH == 17, true, 24> op;
+            PATH == 17, true> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 15) {
