@@ -55,10 +55,7 @@ public:
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
             auto result = Local<float>(4);
-            if constexpr (Pack == 2 && Unroll) {
-                DecodeRow<0>(sig, prior, result);
-                DecodeRow<1>(sig, prior, result);
-            } else if constexpr (Pack == 4 && Unroll) {
+            if constexpr (Pack == 4 && Unroll) {
                 if (count == 4) {
                     DecodeRow<0>(sig, prior, result);
                     DecodeRow<1>(sig, prior, result);
@@ -900,11 +897,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 16) {
-        SingleTaskSmallCandidateDecode<DT_RAW_PRED, 2, true> op;
-        op.Init(raw_pred, priors, decoded, data);
-        op.Process();
-    } else if constexpr (PATH == 15) {
+    if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
