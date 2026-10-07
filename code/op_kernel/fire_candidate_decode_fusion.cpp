@@ -759,10 +759,10 @@ public:
     }
     __aicore__ inline void Process()
     {
-        auto snapshot = At<int32_t>(PackIdxAddr, 8, TPosition::VECOUT);
+        auto snapshot = At<T>(PackIdxAddr, 32 / sizeof(T), TPosition::VECOUT);
         SetFlag<HardEvent::V_MTE3>(outReady_);
         WaitFlag<HardEvent::V_MTE3>(outReady_);
-        DataCopy(out_[GetBlockIdx() * 16].template ReinterpretCast<int32_t>(), snapshot, 8);
+        DataCopyPad(out_[GetBlockIdx() * 16], snapshot, DataCopyExtParams{1, 32, 0, 0, 0});
         SetFlag<HardEvent::MTE3_V>(outFree_);
         WaitFlag<HardEvent::MTE3_V>(outFree_);
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_);
