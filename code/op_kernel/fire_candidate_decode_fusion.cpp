@@ -693,7 +693,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -706,7 +706,8 @@ class PairedBatchCandidateDecode {
     static constexpr uint32_t OneAddr = ColumnAddr + Pitch * 44;
     static constexpr uint32_t RawIdxAddr = OneAddr + 256;
     static constexpr uint32_t PriorIdxAddr = RawIdxAddr + Tile * 4;
-    static constexpr uint32_t PackIdxAddr = PriorIdxAddr + HalfTile * 4;
+    static constexpr uint32_t PriorRows = FastRamp ? ((HalfTile + 63) / 64) * 64 : HalfTile;
+    static constexpr uint32_t PackIdxAddr = PriorIdxAddr + PriorRows * 4;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &d, TPipe *pipe)
@@ -724,15 +725,22 @@ public:
         poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
         auto ri = At<int32_t>(RawIdxAddr, Tile);
         auto pi = At<int32_t>(PriorIdxAddr, HalfTile);
+        if constexpr (FastRamp) {
+            BuildRampCache();
+            FillRamp(ri, Tile);
+            FillRamp(At<int32_t>(PriorIdxAddr, PriorRows), PriorRows);
+        } else {
         CreateVecIndex(ri, int32_t(0), Tile);
         CreateVecIndex(pi, int32_t(0), HalfTile);
+        }
         PipeBarrier<PIPE_V>();
         Muls(ri, ri, int32_t(24), Tile);
         Muls(pi, pi, int32_t(20), HalfTile);
         auto seq = At<int32_t>(ColumnAddr, Pitch * 11);
         auto row = seq[Tile * 5];
         auto index = At<int32_t>(PackIdxAddr, Tile * 5);
-        CreateVecIndex(seq, int32_t(0), Tile * 5);
+        if constexpr (FastRamp) FillRamp(seq, Tile * 5);
+        else CreateVecIndex(seq, int32_t(0), Tile * 5);
         PipeBarrier<PIPE_V>();
         Muls(row, seq, int32_t(13108), Tile * 5);
         PipeBarrier<PIPE_V>();
@@ -791,6 +799,41 @@ public:
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
     }
 private:
+    __aicore__ inline void BuildRampCache()
+    {
+        auto seed = At<int32_t>(OneAddr, 8);
+        for (uint32_t i = 0; i < 8; ++i) seed.SetValue(i, int32_t(i));
+        const auto ready = pipe_->FetchEventID(HardEvent::S_V);
+        SetFlag<HardEvent::S_V>(ready);
+        WaitFlag<HardEvent::S_V>(ready);
+        auto lanes = At<int32_t>(0, 64);
+        Brcb(lanes, seed, uint8_t(1), BrcbRepeatParams{1, 8});
+        PipeBarrier<PIPE_V>();
+        Muls(lanes, lanes, int32_t(8), 64);
+        PipeBarrier<PIPE_V>();
+        Add(lanes, lanes, seed, uint64_t(64), uint8_t(1), {1, 1, 0, 8, 8, 0});
+        PipeBarrier<PIPE_V>();
+        auto steps = At<int32_t>(256, 192);
+        DataCopy(steps, lanes, 64);
+        Adds(steps[64], lanes, int32_t(64), uint64_t(64), uint8_t(1), {1, 1, 8, 8});
+        Adds(steps[128], lanes, int32_t(128), uint64_t(64), uint8_t(1), {1, 1, 8, 8});
+        PipeBarrier<PIPE_V>();
+        Muls(steps, steps, int32_t(64), 192);
+        PipeBarrier<PIPE_V>();
+    }
+    __aicore__ inline void FillRamp(LocalTensor<int32_t> target, uint32_t elements)
+    {
+        const uint32_t repeats = (elements + 63) / 64;
+        auto spread = At<int32_t>(1024, ((repeats + 7) / 8) * 64);
+        Brcb(spread, At<int32_t>(256, 192), uint8_t((repeats + 7) / 8),
+            BrcbRepeatParams{1, 8});
+        PipeBarrier<PIPE_V>();
+        Brcb(target, spread, uint8_t(repeats), BrcbRepeatParams{1, 8});
+        PipeBarrier<PIPE_V>();
+        Add(target, target, At<int32_t>(0, 64), uint64_t(64), uint8_t(repeats),
+            {1, 1, 1, 8, 8, 0});
+        PipeBarrier<PIPE_V>();
+    }
     template <typename U>
     __aicore__ inline LocalTensor<U> At(uint32_t addr, uint32_t count, TPosition pos = TPosition::VECCALC)
     {
@@ -897,7 +940,14 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 15) {
+    if constexpr (PATH == 16 || PATH == 17 || PATH == 18 || PATH == 19) {
+        TPipe pipe;
+        PairedBatchCandidateDecode<DT_RAW_PRED,
+            PATH == 16 ? 256 : (PATH == 17 ? 320 : (PATH == 18 ? 1408 : 1664)),
+            PATH == 17, true> op;
+        op.Init(raw_pred, priors, decoded, data, &pipe);
+        op.Process();
+    } else if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
