@@ -693,7 +693,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool InitOnly = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -747,19 +747,6 @@ public:
     }
     __aicore__ inline void Process()
     {
-        if constexpr (InitOnly) {
-            auto indices = At<T>(PackIdxAddr, 32 / sizeof(T), TPosition::VECOUT);
-            SetFlag<HardEvent::V_MTE3>(outReady_);
-            WaitFlag<HardEvent::V_MTE3>(outReady_);
-            DataCopyPad(out_[GetBlockIdx() * 16], indices,
-                DataCopyExtParams{1, 32, 0, 0, 0});
-            SetFlag<HardEvent::MTE3_V>(outFree_);
-            WaitFlag<HardEvent::MTE3_V>(outFree_);
-            pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_);
-            pipe_->ReleaseEventID<HardEvent::MTE2_V>(priorReady_);
-            pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
-            return;
-        }
         const uint32_t groups = (n_ + 15) / 16;
         const uint32_t begin = (groups * GetBlockIdx() / cores_) * 16;
         uint32_t end = (groups * (GetBlockIdx() + 1) / cores_) * 16;
@@ -910,14 +897,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 16 || PATH == 17 || PATH == 18 || PATH == 19) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED,
-            PATH == 16 ? 256 : (PATH == 17 ? 320 : (PATH == 18 ? 1408 : 1664)),
-            PATH == 17, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
-    } else if constexpr (PATH == 15) {
+    if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
