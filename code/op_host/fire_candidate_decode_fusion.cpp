@@ -84,19 +84,6 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
     }
     if (PATH == 12) PATH = 11;
     else if (PATH == 13 && data->segments > 0) PATH = 15;
-    if (PATH == 11 || PATH == 15) {
-        auto *indexed = context->GetTilingData<FireCandidateDecodeFusionIndexedTilingData>();
-        if (indexed != nullptr) {
-            const uint32_t pitch = (PATH == 11 ? 512 : 576) + 8;
-            for (uint32_t i = 0; i < 576; ++i) {
-                indexed->rawIndex[i] = i * 24;
-                indexed->priorIndex[i] = i * 20;
-            }
-            for (uint32_t i = 0; i < 640; ++i)
-                indexed->packIndex[i] = ((i % 5) * pitch + i / 5) * 4;
-            PATH = PATH == 11 ? 16 : 17;
-        }
-    }
     data->cores = cores;
     context->SetBlockDim(cores);
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
