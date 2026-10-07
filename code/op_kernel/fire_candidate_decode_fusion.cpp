@@ -868,7 +868,7 @@ private:
             if constexpr (Reuse) packed = dst;
             else packed = At<float>(FloatAddr, Tile * 6);
             if constexpr (TransposeOut) {
-                const uint64_t src[16] = {
+                uint64_t src[16] = {
                     ColumnAddr + 0 * Pitch * 4 + 0 * 32, ColumnAddr + 1 * Pitch * 4 + 0 * 32,
                     ColumnAddr + 2 * Pitch * 4 + 0 * 32, ColumnAddr + 3 * Pitch * 4 + 0 * 32,
                     ColumnAddr + 4 * Pitch * 4 + 0 * 32, ColumnAddr + 5 * Pitch * 4 + 0 * 32,
@@ -878,7 +878,7 @@ private:
                     ColumnAddr + 4 * Pitch * 4 + 1 * 32, ColumnAddr + 5 * Pitch * 4 + 1 * 32,
                     ColumnAddr + 5 * Pitch * 4 + 1 * 32, ColumnAddr + 5 * Pitch * 4 + 1 * 32,
                 };
-                const uint64_t target[16] = {
+                uint64_t target[16] = {
                     PackIdxAddr + 0, PackIdxAddr + 256,
                     PackIdxAddr + 32, PackIdxAddr + 288,
                     PackIdxAddr + 64, PackIdxAddr + 320,
