@@ -693,7 +693,7 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool TemporaryEvents = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -717,9 +717,15 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
+        if constexpr (TemporaryEvents) {
+            rawReady_ = pipe->FetchEventID(HardEvent::MTE2_V);
+            priorReady_ = rawReady_;
+            rawFree_ = pipe->FetchEventID(HardEvent::V_MTE2);
+        } else {
         rawReady_ = pipe->AllocEventID<HardEvent::MTE2_V>();
         priorReady_ = pipe->AllocEventID<HardEvent::MTE2_V>();
         rawFree_ = pipe->AllocEventID<HardEvent::V_MTE2>();
+        }
         outReady_ = pipe->FetchEventID(HardEvent::V_MTE3);
         outFree_ = pipe->FetchEventID(HardEvent::MTE3_V);
         poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
@@ -794,9 +800,11 @@ public:
         if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
         if (poolPending_) WaitFlag<HardEvent::MTE3_MTE2>(poolFree_);
         if (rawUsed_) WaitFlag<HardEvent::V_MTE2>(rawFree_);
+        if constexpr (!TemporaryEvents) {
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_);
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(priorReady_);
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
+        }
     }
 private:
     __aicore__ inline void BuildRampCache()
@@ -944,7 +952,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED,
             PATH == 16 ? 256 : (PATH == 17 ? 320 : (PATH == 18 ? 1408 : 1664)),
-            PATH == 17, true> op;
+            PATH == 17, true, true> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 15) {
