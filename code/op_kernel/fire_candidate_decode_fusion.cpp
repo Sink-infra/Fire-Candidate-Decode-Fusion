@@ -529,7 +529,7 @@ class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t HalfRows = Tight ? ((HalfTile + 7) / 8) * 8 : HalfTile;
     static constexpr uint32_t ColumnRows = Tight ? 2 * HalfRows : Tile;
-    static constexpr uint32_t FloatRows = Tight ? Tile + 4 : Tile;
+    static constexpr uint32_t FloatRows = Tight ? (((Tile * 6 + 63) / 64 * 64 + 23) / 24) * 4 : Tile;
     static constexpr uint32_t PackRows = Tight ? HalfTile : Tile;
     static constexpr uint32_t HalfRawBytes = ((HalfTile * 6 * sizeof(T) + 31) / 32) * 32;
     static constexpr uint32_t HalfOutBytes = ((HalfTile * 5 * sizeof(T) + 31) / 32) * 32;
@@ -567,7 +567,7 @@ public:
         PipeBarrier<PIPE_V>();
         Muls(ri, ri, int32_t(24), ColumnRows);
         Muls(pi, pi, int32_t(20), HalfTile);
-        if constexpr (Tight) {
+        if constexpr (Tight && HalfRows != HalfTile) {
             PipeBarrier<PIPE_V>();
             Adds(ri[HalfRows], ri[HalfRows], (int32_t(HalfTile) - int32_t(HalfRows)) * int32_t(24), HalfRows);
         }
@@ -667,7 +667,7 @@ private:
             } else {
                 sig = At<float>(FloatAddr, FloatRows * 6);
                 if constexpr (sizeof(T) == 2) {
-                    if constexpr (Tight) {
+                    if constexpr (Tight && HalfRawBytes != HalfTile * 6 * sizeof(T)) {
                         Cast(sig, raw, RoundMode::CAST_NONE, HalfTile * 6);
                         Cast(sig[HalfTile * 6], raw[HalfRawBytes / sizeof(T)], RoundMode::CAST_NONE, HalfTile * 6);
                     } else {
@@ -726,7 +726,7 @@ private:
             }
             PipeBarrier<PIPE_V>();
             if constexpr (sizeof(T) == 2) {
-                if constexpr (Tight) {
+                if constexpr (Tight && HalfOutBytes != HalfTile * 5 * sizeof(T)) {
                     Cast(dst, packed, RoundMode::CAST_RINT, HalfTile * 5);
                     Cast(dst[HalfOutBytes / sizeof(T)], packed[HalfPacked], RoundMode::CAST_RINT, HalfTile * 5);
                 } else {
@@ -762,7 +762,12 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 15) {
+    if constexpr (PATH == 16) {
+        TPipe pipe;
+        PairedBatchCandidateDecode<DT_RAW_PRED, 288, true, true> op;
+        op.Init(raw_pred, priors, decoded, data, &pipe);
+        op.Process();
+    } else if constexpr (PATH == 15) {
         TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED, 264, true, true> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
