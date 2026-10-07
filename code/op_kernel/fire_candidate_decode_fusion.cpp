@@ -261,6 +261,7 @@ template <typename T, uint32_t Tile, bool Balanced = false>
 class PagedMediumCandidateDecodeFusion {
     static constexpr uint32_t Pitch = Tile + 8;
     static constexpr uint32_t Page = 128;
+    static constexpr uint32_t IndexCount = Tile > Page * 5 ? Tile : Page * 5;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &data)
@@ -279,21 +280,20 @@ public:
         pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
         pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
-        pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
+        pipe_.InitBuffer(rawIndex_, IndexCount * sizeof(uint32_t));
         pipe_.InitBuffer(priorIndex_, Tile * sizeof(uint32_t));
         pipe_.InitBuffer(packIndex_, Page * 5 * sizeof(uint32_t));
         auto r = rawIndex_.Get<int32_t>();
         auto p = priorIndex_.Get<int32_t>();
-        CreateVecIndex(r, int32_t(0), Tile);
-        CreateVecIndex(p, int32_t(0), Tile);
-        PipeBarrier<PIPE_V>();
-        Muls(r, r, int32_t(24), Tile);
-        Muls(p, p, int32_t(20), Tile);
         auto seq = packed_.Get<int32_t>();
         auto row = rawFloat_.Get<int32_t>();
         auto index = packIndex_.Get<int32_t>();
-        CreateVecIndex(seq, int32_t(0), Page * 5);
+        CreateVecIndex(r, int32_t(0), IndexCount);
         PipeBarrier<PIPE_V>();
+        Muls(p, r, int32_t(20), Tile);
+        DataCopy(seq, r, Page * 5);
+        PipeBarrier<PIPE_V>();
+        Muls(r, r, int32_t(24), Tile);
         Muls(row, seq, int32_t(13108), Page * 5);
         PipeBarrier<PIPE_V>();
         ShiftRight(row, row, int32_t(16), Page * 5);
