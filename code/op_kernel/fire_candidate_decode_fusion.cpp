@@ -605,9 +605,10 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool PagedPack = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
+    static constexpr uint32_t PackRows = PagedPack ? 128 : Tile;
     static constexpr uint32_t Pitch = Tile + 8;
     static constexpr bool Reuse = sizeof(T) == 4;
     static constexpr uint32_t RawBytes = Tile * 6 * sizeof(T);
@@ -643,17 +644,17 @@ public:
         Muls(pi, pi, int32_t(20), HalfTile);
         auto seq = At<int32_t>(ColumnAddr, Pitch * 11);
         auto row = seq[Tile * 5];
-        auto index = At<int32_t>(PackIdxAddr, Tile * 5);
-        CreateVecIndex(seq, int32_t(0), Tile * 5);
+        auto index = At<int32_t>(PackIdxAddr, PackRows * 5);
+        CreateVecIndex(seq, int32_t(0), PackRows * 5);
         PipeBarrier<PIPE_V>();
-        Muls(row, seq, int32_t(13108), Tile * 5);
+        Muls(row, seq, int32_t(13108), PackRows * 5);
         PipeBarrier<PIPE_V>();
-        ShiftRight(row, row, int32_t(16), Tile * 5);
-        Muls(seq, seq, int32_t(4 * Pitch), Tile * 5);
+        ShiftRight(row, row, int32_t(16), PackRows * 5);
+        Muls(seq, seq, int32_t(4 * Pitch), PackRows * 5);
         PipeBarrier<PIPE_V>();
-        Muls(row, row, int32_t(4 - 20 * Pitch), Tile * 5);
+        Muls(row, row, int32_t(4 - 20 * Pitch), PackRows * 5);
         PipeBarrier<PIPE_V>();
-        Add(index, seq, row, Tile * 5);
+        Add(index, seq, row, PackRows * 5);
         Duplicate(At<float>(OneAddr, 64), 1.0f, 64);
         PipeBarrier<PIPE_V>();
     }
@@ -774,8 +775,16 @@ private:
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
             else packed = At<float>(FloatAddr, Tile * 6);
-            Gather(packed, c, At<uint32_t>(PackIdxAddr, Tile * 5), 0, uint64_t(64),
-                uint8_t((count * 5 + 63) / 64), 8);
+            if constexpr (PagedPack) {
+                for (uint32_t offset = 0; offset < Tile; offset += PackRows) {
+                    const uint32_t rows = offset + PackRows <= Tile ? PackRows : Tile - offset;
+                    Gather(packed[offset * 5], c, At<uint32_t>(PackIdxAddr, PackRows * 5),
+                        offset * 4, uint64_t(64), uint8_t(rows * 5 / 64), 8);
+                }
+            } else {
+                Gather(packed, c, At<uint32_t>(PackIdxAddr, Tile * 5), 0, uint64_t(64),
+                    uint8_t((count * 5 + 63) / 64), 8);
+            }
             PipeBarrier<PIPE_V>();
             if constexpr (sizeof(T) == 2)
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
@@ -815,7 +824,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Process();
     } else if constexpr (PATH == 12 || PATH == 13) {
         TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13> op;
+        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13, true> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 10) {
