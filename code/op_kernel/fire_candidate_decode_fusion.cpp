@@ -752,6 +752,10 @@ public:
         Add(index, seq, row, Tile * 5);
         Duplicate(At<float>(OneAddr, 64), 1.0f, 64);
         PipeBarrier<PIPE_V>();
+        if constexpr (FastRamp) {
+            SetFlag<HardEvent::V_MTE2>(rawFree_);
+            WaitFlag<HardEvent::V_MTE2>(rawFree_);
+        }
     }
     __aicore__ inline void Process()
     {
