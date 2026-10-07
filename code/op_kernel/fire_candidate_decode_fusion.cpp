@@ -693,10 +693,9 @@ private:
 };
 
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool HalfPack = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
-    static constexpr uint32_t PackBytes = HalfPack && sizeof(T) == 2 ? 2 : 4;
     static constexpr uint32_t Pitch = Tile + 8;
     static constexpr bool Reuse = sizeof(T) == 4;
     static constexpr uint32_t RawBytes = Tile * 6 * sizeof(T);
@@ -738,9 +737,9 @@ public:
         Muls(row, seq, int32_t(13108), Tile * 5);
         PipeBarrier<PIPE_V>();
         ShiftRight(row, row, int32_t(16), Tile * 5);
-        Muls(seq, seq, int32_t(PackBytes * Pitch), Tile * 5);
+        Muls(seq, seq, int32_t(4 * Pitch), Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(row, row, int32_t(PackBytes - 5 * PackBytes * Pitch), Tile * 5);
+        Muls(row, row, int32_t(4 - 20 * Pitch), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(index, seq, row, Tile * 5);
         Duplicate(At<float>(OneAddr, 64), 1.0f, 64);
@@ -860,17 +859,6 @@ private:
             PipeBarrier<PIPE_V>();
             if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
             auto dst = At<T>(SharedAddr, Tile * 5, TPosition::VECOUT);
-            if constexpr (HalfPack && sizeof(T) == 2) {
-                auto halfColumns = At<T>(FloatAddr, Pitch * 5);
-                Cast(halfColumns, c, RoundMode::CAST_RINT, Pitch * 5);
-                PipeBarrier<PIPE_V>();
-                if constexpr ((Tile * 5) % 128 == 0)
-                    Gather(dst, halfColumns, At<uint32_t>(PackIdxAddr, Tile * 5), 0,
-                           uint64_t(128), uint8_t(Tile * 5 / 128), 8);
-                else
-                    Gather(dst, halfColumns, At<uint32_t>(PackIdxAddr, Tile * 5), 0, Tile * 5);
-                PipeBarrier<PIPE_V>();
-            } else {
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
             else packed = At<float>(FloatAddr, Tile * 6);
@@ -881,7 +869,6 @@ private:
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
             else if constexpr (!Reuse)
                 DataCopy(dst, packed, ((count * 5 + 7) / 8) * 8);
-            }
             SetFlag<HardEvent::V_MTE3>(outReady_);
             WaitFlag<HardEvent::V_MTE3>(outReady_);
             const uint32_t bytes = validCount * 5 * uint32_t(sizeof(T));
@@ -910,17 +897,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 16 || PATH == 17) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 16 ? 1408 : 1664, false, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
-    } else if constexpr (PATH == 18 || PATH == 19) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 18 ? 256 : 320, PATH == 19, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
-    } else if constexpr (PATH == 15) {
+    if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
