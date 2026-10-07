@@ -607,7 +607,7 @@ private:
             PipeBarrier<PIPE_V>();
             auto c = At<float>(ColumnAddr, Pitch * 11);
             const auto ri = At<uint32_t>(RawIdxAddr, Tile);
-            
+
             for (uint32_t j = 0; j < 6; ++j)
                 Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             PipeBarrier<PIPE_V>();
@@ -664,11 +664,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 11) {
-        KernelFireCandidateDecodeFusion<DT_RAW_PRED, 832, false, true> op;
-        op.Init(raw_pred, priors, decoded, data);
-        op.Process();
-    } else if constexpr (PATH == 10) {
+    if constexpr (PATH == 10) {
         SmallCandidateDecode<DT_RAW_PRED, 4> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();

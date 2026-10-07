@@ -63,7 +63,6 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         if (cores > groups) cores = groups;
         const uint32_t span = ((groups + cores - 1) / cores) * 8;
         PATH = span <= 768 ? 6 : 7;
-        if (dtype == ge::DT_FLOAT && span > 768 && span <= 832) PATH = 11;
     }
     if ((PATH == 6 || PATH == 7) && dtype == ge::DT_FLOAT16 && data->batch % 2 == 0) {
         const uint32_t groups = (data->candidates + 15) / 16;
