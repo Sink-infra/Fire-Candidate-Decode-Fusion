@@ -4,7 +4,7 @@
 
 using namespace AscendC;
 
-template <typename T, uint32_t Pack, bool Unroll = false>
+template <typename T, uint32_t Pack, bool Unroll = false, bool SharedMask = false>
 class SingleTaskSmallCandidateDecode {
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -44,6 +44,19 @@ public:
             else
                 DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             PipeBarrier<PIPE_V>();
+            if constexpr (SharedMask) {
+                SetMaskCount();
+                SetVectorMask<float, MaskMode::COUNTER>(0, count * 6);
+                Muls<float, false>(sig, sig, -1.0f, uint64_t(0), uint8_t(1), {1, 1, 8, 8});
+                PipeBarrier<PIPE_V>();
+                Exp<float, false>(sig, sig, uint64_t(0), uint8_t(1), {1, 1, 8, 8});
+                PipeBarrier<PIPE_V>();
+                Adds<float, false>(sig, sig, 1.0f, uint64_t(0), uint8_t(1), {1, 1, 8, 8});
+                PipeBarrier<PIPE_V>();
+                Div<float, false>(sig, Local<float>(5), sig, uint64_t(0), uint8_t(1), {1, 1, 1, 8, 0, 8});
+                SetMaskNorm();
+                ResetMask();
+            } else {
             Muls(sig, sig, -1.0f, count * 6);
             PipeBarrier<PIPE_V>();
             Exp(sig, sig, count * 6);
@@ -51,6 +64,7 @@ public:
             Adds(sig, sig, 1.0f, count * 6);
             PipeBarrier<PIPE_V>();
             Div(sig, Local<float>(5), sig, count * 6);
+            }
             constexpr uint32_t vs = 0;
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
@@ -897,7 +911,11 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 15) {
+    if constexpr (PATH == 16) {
+        SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true, true> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
