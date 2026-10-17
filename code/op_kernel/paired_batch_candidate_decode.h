@@ -77,7 +77,7 @@ public:
             PipeBarrier<PIPE_V>();
             ExpandCandidatePatternIndex<Tile * 5>(index);
         }
-        Duplicate(At<float>(OneAddr, 64), 1.0f, 64);
+        Duplicate(At<float>(OneAddr, 64), Tile >= 1024 ? 2.0f : 1.0f, 64);
         PipeBarrier<PIPE_V>();
         if constexpr (FastRamp && !RowScratch) {
             SetFlag<HardEvent::V_MTE2>(rawFree_);
@@ -202,7 +202,7 @@ private:
                     DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             }
             if constexpr (!Reuse) ReleaseRawAndPrefetch(b, start, validCount);
-            PipeBarrier<PIPE_V>();
+            if constexpr (!Reuse || Tile < 1024) PipeBarrier<PIPE_V>();
             Muls(sig, sig, -1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             PipeBarrier<PIPE_V>();
             Exp(sig, sig, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
@@ -219,14 +219,18 @@ private:
                 Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             PipeBarrier<PIPE_V>();
             if constexpr (Reuse) ReleaseRawAndPrefetch(b, start, validCount);
-            Muls(c, c, 2.0f, Pitch * 4);
-            PipeBarrier<PIPE_V>();
+            if constexpr (Tile < 1024) {
+                Muls(c, c, 2.0f, Pitch * 4);
+                PipeBarrier<PIPE_V>();
+            }
             Adds(c, c, -0.5f, Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], Pitch * 2);
             Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);
             PipeBarrier<PIPE_V>();
             Add(c, c, c[6 * Pitch], Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], Pitch * 2);
+            if constexpr (Tile >= 1024)
+                Muls(c[4 * Pitch], c[4 * Pitch], 0.25f, count);
             PipeBarrier<PIPE_V>();
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
@@ -238,7 +242,7 @@ private:
             else packed = At<float>(FloatAddr, Tile * 6);
             Gather(packed, c, At<uint32_t>(PackIdxAddr, Tile * 5), 0, uint64_t(64),
                 uint8_t((count * 5 + 63) / 64), 8);
-            PipeBarrier<PIPE_V>();
+            if constexpr (!Reuse || Tile < 1024) PipeBarrier<PIPE_V>();
             if constexpr (sizeof(T) == 2)
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
             else if constexpr (!Reuse)
