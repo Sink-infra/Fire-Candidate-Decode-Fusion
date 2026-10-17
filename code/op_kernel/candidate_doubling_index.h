@@ -1,11 +1,12 @@
 #pragma once
 
-template <uint32_t Elements>
+template <uint32_t Elements, bool StaticEvents = false>
 __aicore__ inline void BuildDoublingCandidateIndex(LocalTensor<int32_t> sequence,
     LocalTensor<int32_t> seed, TPipe *pipe)
 {
     for (uint32_t i = 0; i < 8; ++i) seed.SetValue(i, int32_t(i));
-    const auto ready = pipe->FetchEventID(HardEvent::S_V);
+    int32_t ready = 0;
+    if constexpr (!StaticEvents) ready = pipe->FetchEventID(HardEvent::S_V);
     SetFlag<HardEvent::S_V>(ready);
     WaitFlag<HardEvent::S_V>(ready);
     Brcb(sequence, seed, uint8_t(1), BrcbRepeatParams{1, 8});

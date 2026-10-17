@@ -770,6 +770,7 @@ private:
 
 #include "paired_batch_candidate_decode.h"
 #include "candidate_fixed_small_batch.h"
+#include "grouped_medium_candidate_entry.h"
 
 template <typename DT_RAW_PRED, uint32_t PATH>
 __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
@@ -777,7 +778,10 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 26) {
+    if constexpr (PATH == 31 || PATH == 32) {
+        RunFourBatchMediumCandidate<DT_RAW_PRED, PATH == 32>(raw_pred, priors, decoded, data);
+    } else if constexpr (PATH == 26) {
+        InitSocState();
         ProcessFixedSmallBatch<DT_RAW_PRED>(raw_pred, priors, decoded, data);
     } else if constexpr (PATH == 24) {
         SmallCandidateDecode<DT_RAW_PRED, 8, false, true> op;
@@ -788,14 +792,14 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         const uint32_t begin = (groups * GetBlockIdx() / data.cores) * 16;
         uint32_t end = (groups * (GetBlockIdx() + 1) / data.cores) * 16;
         if (end > data.candidates) end = data.candidates;
-        TPipe pipe;
+        InitSocState();
         if (end - begin <= 128) {
-            PairedBatchCandidateDecode<DT_RAW_PRED, 256, false, false, true, true, true> op;
-            op.Init(raw_pred, priors, decoded, data, &pipe);
+            PairedBatchCandidateDecode<DT_RAW_PRED, 256, false, false, true, true, true, true> op;
+            op.Init(raw_pred, priors, decoded, data, nullptr);
             op.Process();
         } else {
-            PairedBatchCandidateDecode<DT_RAW_PRED, 320, true, false, true, true, true> op;
-            op.Init(raw_pred, priors, decoded, data, &pipe);
+            PairedBatchCandidateDecode<DT_RAW_PRED, 320, true, false, true, true, true, true> op;
+            op.Init(raw_pred, priors, decoded, data, nullptr);
             op.Process();
         }
     } else if constexpr (PATH == 19) {
@@ -810,6 +814,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 15) {
+        InitSocState();
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
@@ -818,9 +823,9 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 12 || PATH == 13) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13, false, true, false, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
+        InitSocState();
+        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13, false, true, false, true, true> op;
+        op.Init(raw_pred, priors, decoded, data, nullptr);
         op.Process();
     } else if constexpr (PATH == 10) {
         SmallCandidateDecode<DT_RAW_PRED, 4> op;
