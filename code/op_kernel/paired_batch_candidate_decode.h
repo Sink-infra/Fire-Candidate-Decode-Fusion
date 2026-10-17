@@ -117,13 +117,14 @@ public:
             SetFlag<HardEvent::MTE2_V>(priorReady_);
             WaitFlag<HardEvent::MTE2_V>(priorReady_);
             auto c = At<float>(ColumnAddr, Pitch * 11);
+            const uint32_t priorCount = NativeSix ? HalfTile : count;
             for (uint32_t j = 0; j < 5; ++j) {
                 if constexpr (CounterPrior)
                     Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
-                        j * 4, count);
+                        j * 4, priorCount);
                 else
                     Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, HalfTile),
-                        j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
+                        j * 4, uint64_t(64), uint8_t((priorCount + 63) / 64), 8);
             }
             PipeBarrier<PIPE_V>();
             #pragma unroll
