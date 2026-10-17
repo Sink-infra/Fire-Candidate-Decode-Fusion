@@ -502,9 +502,9 @@ public:
         out_.SetGlobalBuffer((__gm__ T *)out);
         pipe_.InitBuffer(inRaw_, (Tile == 1024 || CachePrior) ? 2 : 1, Tile * 6 * sizeof(T));
         pipe_.InitBuffer(inPrior_, (Tile == 1024 && !CachePrior) ? 2 : 1, Tile * 5 * sizeof(float));
-        pipe_.InitBuffer(outQueue_, 1, Tile * 5 * sizeof(T));
+        pipe_.InitBuffer(outQueue_, CachePrior ? 2 : 1, Tile * 5 * sizeof(T));
         if constexpr (!Reuse) pipe_.InitBuffer(rawFloat_, Tile * 6 * sizeof(float));
-        pipe_.InitBuffer(columns_, Pitch * 11 * sizeof(float));
+        pipe_.InitBuffer(columns_, Pitch * (CachePrior ? 12 : 11) * sizeof(float));
         if constexpr (!Reuse) pipe_.InitBuffer(packed_, Tile * 5 * sizeof(float));
         pipe_.InitBuffer(ones_, 64 * sizeof(float));
         pipe_.InitBuffer(rawIndex_, Tile * sizeof(uint32_t));
@@ -576,16 +576,11 @@ private:
                 else
                     DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             }
-            PipeBarrier<PIPE_V>();
             Muls(sig, sig, -1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
             Exp(sig, sig, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
             Adds(sig, sig, 1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
             Div(sig, ones_.Get<float>(), sig, uint64_t(64),
                 uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
-            PipeBarrier<PIPE_V>();
             auto c = columns_.Get<float>();
             const auto ri = rawIndex_.Get<uint32_t>();
             const auto pi = priorIndex_.Get<uint32_t>();
@@ -595,26 +590,33 @@ private:
             for (uint32_t j = 0; j < 5; ++j)
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             }
-            PipeBarrier<PIPE_V>();
+            if constexpr (CachePrior) {
+            // Folded prior columns: 6=ax, 7=ay, 9=cw, 10=ch, 11=2*stride.
+            Mul(c[0 * Pitch], c[0 * Pitch], c[11 * Pitch], count);
+            Add(c[0 * Pitch], c[0 * Pitch], c[6 * Pitch], count);
+            Mul(c[1 * Pitch], c[1 * Pitch], c[11 * Pitch], count);
+            Add(c[1 * Pitch], c[1 * Pitch], c[7 * Pitch], count);
+            Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], count);
+            Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], count);
+            Mul(c[3 * Pitch], c[3 * Pitch], c[3 * Pitch], count);
+            Mul(c[3 * Pitch], c[3 * Pitch], c[10 * Pitch], count);
+            Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);
+            } else {
             Muls(c, c, 2.0f, Pitch * 4);
-            PipeBarrier<PIPE_V>();
             Adds(c, c, -0.5f, Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], Pitch * 2);
             Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);
-            PipeBarrier<PIPE_V>();
             Add(c, c, c[6 * Pitch], Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], Pitch * 2);
-            PipeBarrier<PIPE_V>();
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
-            PipeBarrier<PIPE_V>();
+            }
             auto dst = outQueue_.AllocTensor<T>();
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
             else packed = packed_.Get<float>();
             Gather(packed, c, packIndex_.Get<uint32_t>(), 0, uint64_t(64),
                 uint8_t((count * 5 + 63) / 64), 8);
-            PipeBarrier<PIPE_V>();
             if constexpr (sizeof(T) == 2)
                 Cast(dst, packed, RoundMode::CAST_RINT, count * 5);
             else if constexpr (!Reuse)
@@ -641,6 +643,7 @@ private:
         if (end > n_) end = n_;
         for (uint32_t start = begin; start < end; start += Tile) {
             const uint32_t count = start + Tile <= end ? Tile : end - start;
+            LoadRaw(0, start, count);
             auto prior = inPrior_.AllocTensor<float>();
             DataCopyPad(prior, prior_[start * 5],
                 DataCopyExtParams{1, count * 20, 0, 0, 0},
@@ -648,12 +651,24 @@ private:
             inPrior_.EnQue(prior);
             prior = inPrior_.DeQue<float>();
             auto c = columns_.Get<float>();
+            const auto pi = priorIndex_.Get<uint32_t>();
             for (uint32_t j = 0; j < 5; ++j)
-                Gather(c[(j + 6) * Pitch], prior, priorIndex_.Get<uint32_t>(), j * 4,
+                Gather(c[(j + 6) * Pitch], prior, pi, j * 4,
                        uint64_t(64), uint8_t((count + 63) / 64), 8);
-            PipeBarrier<PIPE_V>();
             inPrior_.FreeTensor(prior);
-            LoadRaw(0, start, count);
+            // Fold priors into per-channel decode constants:
+            // 6=ax, 7=ay, 9=cw, 10=ch, 11=bx=by; column 8 (stride) is scratch.
+            Adds(c[6 * Pitch], c[6 * Pitch], -0.5f, count);
+            Adds(c[7 * Pitch], c[7 * Pitch], -0.5f, count);
+            Muls(c[11 * Pitch], c[8 * Pitch], 2.0f, count);
+            Muls(c[9 * Pitch], c[9 * Pitch], 4.0f, count);
+            Muls(c[10 * Pitch], c[10 * Pitch], 4.0f, count);
+            PipeBarrier<PIPE_V>();
+            Mul(c[6 * Pitch], c[6 * Pitch], c[8 * Pitch], count);
+            Mul(c[7 * Pitch], c[7 * Pitch], c[8 * Pitch], count);
+            Mul(c[9 * Pitch], c[9 * Pitch], c[8 * Pitch], count);
+            Mul(c[10 * Pitch], c[10 * Pitch], c[8 * Pitch], count);
+            PipeBarrier<PIPE_V>();
             for (uint32_t b = 0; b < batch_; ++b) {
                 auto raw = inRaw_.DeQue<T>();
                 if (b + 1 < batch_) LoadRaw(b + 1, start, count);
@@ -683,8 +698,8 @@ private:
     }
 
     TPipe pipe_;
-    TQue<QuePosition::VECIN, 1> inRaw_, inPrior_;
-    TQue<QuePosition::VECOUT, 1> outQueue_;
+    TQue<QuePosition::VECIN, 4> inRaw_, inPrior_;
+    TQue<QuePosition::VECOUT, 2> outQueue_;
     TBuf<TPosition::VECCALC> rawFloat_, columns_, packed_, ones_;
     TBuf<TPosition::VECCALC> rawIndex_, priorIndex_, packIndex_;
     GlobalTensor<T> raw_, out_;
