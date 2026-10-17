@@ -15,11 +15,15 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 18) {
-        TPipe pipe;
+    if constexpr (PATH == 19 || PATH == 20) {
+        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 19 ? 512 : 576,
+            PATH == 20, true, true, 4> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 18) {
         PairedBatchCandidateDecode<DT_RAW_PRED, 1408, false, true,
             sizeof(DT_RAW_PRED) == 4> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
+        op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 15) {
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
@@ -30,19 +34,17 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 12 || PATH == 13) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
+        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13, true, true> op;
+        op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 10) {
-        SmallCandidateDecode<DT_RAW_PRED, 4> op;
+        SmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 8 || PATH == 9) {
-        TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 8 ? 1408 : 1664,
             false, PATH == 9, sizeof(DT_RAW_PRED) == 4> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
+        op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 0) {
         SmallCandidateDecode<DT_RAW_PRED, 1> op;

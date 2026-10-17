@@ -82,6 +82,11 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         if (span >= 96 && span <= 128) PATH = 12;
         else if (span > 128 && span <= 160) PATH = 13;
     }
+    if (data->batch % 4 == 0 && (PATH == 12 || PATH == 13)) {
+        const uint32_t groups = (data->candidates + 15) / 16;
+        const uint32_t span = ((groups + cores - 1) / cores) * 16;
+        if (PATH == 12 || span <= 144) PATH += 7;
+    }
     if (PATH == 14 && data->batch == 1 &&
         data->candidates / 4 <= platform.GetCoreNumAiv()) PATH = 15;
     if (PATH == 8) PATH = 18;
