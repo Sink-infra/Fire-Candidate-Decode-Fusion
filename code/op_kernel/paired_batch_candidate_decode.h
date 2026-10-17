@@ -1,8 +1,9 @@
 #pragma once
 #include "candidate_doubling_index.h"
 #include "candidate_pattern_index.h"
+#include "candidate_native_six_input.h"
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / BatchGroup;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -40,6 +41,13 @@ public:
         }
         auto ri = At<int32_t>(RawIdxAddr, Tile);
         auto pi = At<int32_t>(PriorIdxAddr, HalfTile);
+        if constexpr (NativeSix) {
+            static_assert(BatchGroup == 2);
+            BuildNativeSixCandidateIndices<Tile, Pitch, StaticEvents>(
+                At<int32_t>(ColumnAddr, Pitch * 11),
+                At<int32_t>(RawIdxAddr, Tile), pi,
+                At<int32_t>(PackIdxAddr, Tile * 5), pipe);
+        } else {
         if constexpr (PatternIndex) {
             auto sequence = At<int32_t>(ColumnAddr, Pitch * 11);
             constexpr uint32_t RampElements = Tile < 320 ? 320 : Tile;
@@ -81,6 +89,7 @@ public:
         if constexpr (PatternIndex) {
             PipeBarrier<PIPE_V>();
             ExpandCandidatePatternIndex<Tile * 5>(index);
+        }
         }
         Duplicate(At<float>(OneAddr, 64), Tile >= 1024 ? 2.0f : 1.0f, 64);
         PipeBarrier<PIPE_V>();
@@ -224,8 +233,12 @@ private:
             auto c = At<float>(ColumnAddr, Pitch * 11);
             const auto ri = At<uint32_t>(RawIdxAddr, Tile);
 
+            if constexpr (NativeSix)
+                GatherNativeSixCandidates<Tile, Pitch, Reuse ? 0 : FloatAddr, ColumnAddr>();
+            else {
             for (uint32_t j = 0; j < 6; ++j)
                 Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
+            }
             PipeBarrier<PIPE_V>();
             if constexpr (Reuse) ReleaseRawAndPrefetch(b, start, validCount);
             if constexpr (Tile < 1024) {
