@@ -84,6 +84,14 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
     }
     if (PATH == 14 && data->batch == 1 &&
         data->candidates / 4 <= platform.GetCoreNumAiv()) PATH = 15;
+    if (total <= 128 && data->batch >= 2 && data->candidates >= 8) {
+        PATH = 24;
+        cores = platform.GetCoreNumAiv();
+        const uint32_t tasks = data->batch * ((data->candidates + 7) / 8);
+        if (cores > tasks) cores = tasks;
+        if (cores == tasks) PATH = 26;
+    }
+    if (PATH == 13) PATH = 21;
     if (PATH == 8) PATH = 18;
     data->cores = cores;
     context->SetBlockDim(cores);
