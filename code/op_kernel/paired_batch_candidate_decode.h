@@ -2,9 +2,9 @@
 #include "candidate_doubling_index.h"
 #include "candidate_pattern_index.h"
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2>
 class PairedBatchCandidateDecode {
-    static constexpr uint32_t HalfTile = Tile / 2;
+    static constexpr uint32_t HalfTile = Tile / BatchGroup;
     static constexpr uint32_t Pitch = Tile + 8;
     static constexpr bool Reuse = sizeof(T) == 4;
     static constexpr uint32_t RawBytes = Tile * 6 * sizeof(T);
@@ -27,23 +27,28 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
+        if constexpr (StaticEvents) {
+            rawReady_ = 0; priorReady_ = 1; rawFree_ = 0;
+            outReady_ = 0; outFree_ = 0; poolFree_ = 0;
+        } else {
         rawReady_ = pipe->AllocEventID<HardEvent::MTE2_V>();
         priorReady_ = pipe->AllocEventID<HardEvent::MTE2_V>();
         rawFree_ = pipe->AllocEventID<HardEvent::V_MTE2>();
         outReady_ = pipe->FetchEventID(HardEvent::V_MTE3);
         outFree_ = pipe->FetchEventID(HardEvent::MTE3_V);
         poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
+        }
         auto ri = At<int32_t>(RawIdxAddr, Tile);
         auto pi = At<int32_t>(PriorIdxAddr, HalfTile);
         if constexpr (PatternIndex) {
             auto sequence = At<int32_t>(ColumnAddr, Pitch * 11);
             constexpr uint32_t RampElements = Tile < 320 ? 320 : Tile;
-            BuildDoublingCandidateIndex<RampElements>(sequence, sequence[RampElements], pipe);
+            BuildDoublingCandidateIndex<RampElements, StaticEvents>(sequence, sequence[RampElements], pipe);
             DataCopy(ri, sequence, Tile);
             DataCopy(pi, sequence, HalfTile);
         } else if constexpr (DoublingIndex) {
             auto sequence = At<int32_t>(ColumnAddr, Pitch * 11);
-            BuildDoublingCandidateIndex<Tile * 5>(sequence, sequence[Tile * 5], pipe);
+            BuildDoublingCandidateIndex<Tile * 5, StaticEvents>(sequence, sequence[Tile * 5], pipe);
             DataCopy(ri, sequence, Tile);
             DataCopy(pi, sequence, HalfTile);
         } else if constexpr (FastRamp) {
@@ -112,11 +117,13 @@ public:
                         j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             }
             PipeBarrier<PIPE_V>();
-            for (uint32_t j = 0; j < 5; ++j)
-                DataCopy(c[(j + 6) * Pitch + HalfTile], c[(j + 6) * Pitch], HalfTile);
+            #pragma unroll
+            for (uint32_t q = 1; q < BatchGroup; ++q)
+                for (uint32_t j = 0; j < 5; ++j)
+                    DataCopy(c[(j + 6) * Pitch + q * HalfTile], c[(j + 6) * Pitch], HalfTile);
             PipeBarrier<PIPE_V>();
             LoadRaw(0, start, count);
-            for (uint32_t b = 0; b < batch_; b += 2) {
+            for (uint32_t b = 0; b < batch_; b += BatchGroup) {
                 WaitFlag<HardEvent::MTE2_V>(rawReady_);
                 auto raw = At<T>(0, Tile * 6, TPosition::VECIN);
                 Compute(raw, prior, b, start, count);
@@ -125,9 +132,11 @@ public:
         if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
         if (poolPending_) WaitFlag<HardEvent::MTE3_MTE2>(poolFree_);
         if (rawUsed_) WaitFlag<HardEvent::V_MTE2>(rawFree_);
+        if constexpr (!StaticEvents) {
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(rawReady_);
         pipe_->ReleaseEventID<HardEvent::MTE2_V>(priorReady_);
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(rawFree_);
+        }
     }
 private:
     __aicore__ inline void BuildRampCache()
@@ -177,7 +186,7 @@ private:
         const uint32_t bytes = count * 6 * uint32_t(sizeof(T));
         const uint32_t localGap = (HalfTile * 6 * uint32_t(sizeof(T)) - ((bytes + 31) / 32) * 32) / 32;
         DataCopyPad(raw, raw_[(b * n_ + start) * 6],
-            DataCopyExtParams{2, bytes, (n_ - count) * 6 * uint32_t(sizeof(T)), localGap, 0},
+            DataCopyExtParams{uint16_t(BatchGroup), bytes, (n_ - count) * 6 * uint32_t(sizeof(T)), localGap, 0},
             DataCopyPadExtParams<T>{false, 0, 0, 0});
         SetFlag<HardEvent::MTE2_V>(rawReady_);
         rawUsed_ = true;
@@ -185,7 +194,7 @@ private:
     __aicore__ inline void ReleaseRawAndPrefetch(uint32_t b, uint32_t start, uint32_t count)
     {
         SetFlag<HardEvent::V_MTE2>(rawFree_);
-        if (b + 2 < batch_) LoadRaw(b + 2, start, count);
+        if (b + BatchGroup < batch_) LoadRaw(b + BatchGroup, start, count);
     }
     __aicore__ inline void Compute(LocalTensor<T> raw, LocalTensor<float> prior,
                                   uint32_t b, uint32_t start, uint32_t validCount)
@@ -252,10 +261,10 @@ private:
             const uint32_t bytes = validCount * 5 * uint32_t(sizeof(T));
             const uint32_t localGap = (HalfTile * 5 * uint32_t(sizeof(T)) - ((bytes + 31) / 32) * 32) / 32;
             DataCopyPad(out_[(b * n_ + start) * 5], dst,
-                DataCopyExtParams{2, bytes, localGap, (n_ - validCount) * 5 * uint32_t(sizeof(T)), 0});
+                DataCopyExtParams{uint16_t(BatchGroup), bytes, localGap, (n_ - validCount) * 5 * uint32_t(sizeof(T)), 0});
             SetFlag<HardEvent::MTE3_V>(outFree_);
             outPending_ = true;
-            if (b + 2 >= batch_) {
+            if (b + BatchGroup >= batch_) {
                 SetFlag<HardEvent::MTE3_MTE2>(poolFree_);
                 poolPending_ = true;
             }
