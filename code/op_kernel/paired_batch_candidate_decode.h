@@ -1,6 +1,8 @@
 #pragma once
+#include "candidate_doubling_index.h"
+#include "candidate_pattern_index.h"
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / 2;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -33,7 +35,18 @@ public:
         poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
         auto ri = At<int32_t>(RawIdxAddr, Tile);
         auto pi = At<int32_t>(PriorIdxAddr, HalfTile);
-        if constexpr (FastRamp) {
+        if constexpr (PatternIndex) {
+            auto sequence = At<int32_t>(ColumnAddr, Pitch * 11);
+            constexpr uint32_t RampElements = Tile < 320 ? 320 : Tile;
+            BuildDoublingCandidateIndex<RampElements>(sequence, sequence[RampElements], pipe);
+            DataCopy(ri, sequence, Tile);
+            DataCopy(pi, sequence, HalfTile);
+        } else if constexpr (DoublingIndex) {
+            auto sequence = At<int32_t>(ColumnAddr, Pitch * 11);
+            BuildDoublingCandidateIndex<Tile * 5>(sequence, sequence[Tile * 5], pipe);
+            DataCopy(ri, sequence, Tile);
+            DataCopy(pi, sequence, HalfTile);
+        } else if constexpr (FastRamp) {
             BuildRampCache();
             FillRamp(ri, Tile);
             FillRamp(At<int32_t>(PriorIdxAddr, PriorRows), PriorRows);
@@ -47,17 +60,23 @@ public:
         auto seq = At<int32_t>(ColumnAddr, Pitch * 11);
         auto row = seq[Tile * 5];
         auto index = At<int32_t>(PackIdxAddr, Tile * 5);
-        if constexpr (FastRamp) FillRamp(seq, Tile * 5);
+        if constexpr (DoublingIndex || PatternIndex) {}
+        else if constexpr (FastRamp) FillRamp(seq, Tile * 5);
         else CreateVecIndex(seq, int32_t(0), Tile * 5);
         PipeBarrier<PIPE_V>();
-        Muls(row, seq, int32_t(13108), Tile * 5);
+        constexpr uint32_t IndexSeed = PatternIndex ? 320 : Tile * 5;
+        Muls(row, seq, int32_t(13108), IndexSeed);
         PipeBarrier<PIPE_V>();
-        ShiftRight(row, row, int32_t(16), Tile * 5);
-        Muls(seq, seq, int32_t(4 * Pitch), Tile * 5);
+        ShiftRight(row, row, int32_t(16), IndexSeed);
+        Muls(seq, seq, int32_t(4 * Pitch), IndexSeed);
         PipeBarrier<PIPE_V>();
-        Muls(row, row, int32_t(4 - 20 * Pitch), Tile * 5);
+        Muls(row, row, int32_t(4 - 20 * Pitch), IndexSeed);
         PipeBarrier<PIPE_V>();
-        Add(index, seq, row, Tile * 5);
+        Add(index, seq, row, IndexSeed);
+        if constexpr (PatternIndex) {
+            PipeBarrier<PIPE_V>();
+            ExpandCandidatePatternIndex<Tile * 5>(index);
+        }
         Duplicate(At<float>(OneAddr, 64), 1.0f, 64);
         PipeBarrier<PIPE_V>();
         if constexpr (FastRamp && !RowScratch) {
