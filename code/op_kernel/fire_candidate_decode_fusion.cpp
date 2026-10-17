@@ -41,12 +41,17 @@ public:
             constexpr uint32_t mv = 0;
             SetFlag<HardEvent::MTE2_V>(mv);
             WaitFlag<HardEvent::MTE2_V>(mv);
-            auto sig = Local<float>(3);
-            if constexpr (sizeof(T) == 2)
-                Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
-            else
-                DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
-            PipeBarrier<PIPE_V>();
+            LocalTensor<float> sig;
+            if constexpr (FixedBase && sizeof(T) == 4) {
+                sig = raw;
+            } else {
+                sig = Local<float>(3);
+                if constexpr (sizeof(T) == 2)
+                    Cast(sig, raw, RoundMode::CAST_NONE, count * 6);
+                else
+                    DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
+                PipeBarrier<PIPE_V>();
+            }
             Muls(sig, sig, -1.0f, count * 6);
             PipeBarrier<PIPE_V>();
             Exp(sig, sig, count * 6);
@@ -58,7 +63,16 @@ public:
             SetFlag<HardEvent::V_S>(vs);
             WaitFlag<HardEvent::V_S>(vs);
             auto result = Local<float>(4);
-            if constexpr (Pack == 4 && Unroll) {
+            if constexpr (Pack == 8 && Unroll) {
+                DecodeRow<0>(sig, prior, result);
+                DecodeRow<1>(sig, prior, result);
+                DecodeRow<2>(sig, prior, result);
+                DecodeRow<3>(sig, prior, result);
+                DecodeRow<4>(sig, prior, result);
+                DecodeRow<5>(sig, prior, result);
+                DecodeRow<6>(sig, prior, result);
+                DecodeRow<7>(sig, prior, result);
+            } else if constexpr (Pack == 4 && Unroll) {
                 if (count == 4) {
                     DecodeRow<0>(sig, prior, result);
                     DecodeRow<1>(sig, prior, result);
@@ -114,6 +128,14 @@ public:
             result.SetValue(row * 5 + 4, score);
             }
             }
+            if constexpr (FixedBase && sizeof(T) == 4) {
+                constexpr uint32_t bytes = ((Pack * 24 + 31) / 32) * 32;
+                auto scalarOutput = LocalTensor<float>(TPosition::VECOUT, 4 * bytes, bytes / 4);
+                SetFlag<HardEvent::S_MTE3>(0);
+                WaitFlag<HardEvent::S_MTE3>(0);
+                DataCopyPad(out_[i * 5], scalarOutput,
+                    DataCopyExtParams{1, count * 20, 0, 0, 0});
+            } else {
             constexpr uint32_t sv = 0;
             SetFlag<HardEvent::S_V>(sv);
             WaitFlag<HardEvent::S_V>(sv);
@@ -130,6 +152,7 @@ public:
             else {
             DataCopyPad(out_[i * 5], dst,
                 DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
+            }
             }
             constexpr uint32_t om = 0;
             SetFlag<HardEvent::MTE3_V>(om);
@@ -796,7 +819,7 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Process();
     } else if constexpr (PATH == 12 || PATH == 13) {
         TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13> op;
+        PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 12 ? 256 : 320, PATH == 13, false, true, false, true> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 10) {
