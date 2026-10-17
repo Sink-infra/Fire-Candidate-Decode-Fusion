@@ -7,7 +7,7 @@ using namespace AscendC;
 #include "candidate_geometry.h"
 #include "candidate_grouped_tail.h"
 
-template <typename T, uint32_t Pack, bool Unroll = false>
+template <typename T, uint32_t Pack, bool Unroll = false, bool FixedBase = false, bool SafeCopy = false>
 class SingleTaskSmallCandidateDecode {
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -23,11 +23,11 @@ public:
     {
         {
             const uint32_t task = GetBlockIdx();
-            const uint32_t i = task * Pack;
+            const uint32_t i = FixedBase ? 0 : task * Pack;
             constexpr uint32_t count = Pack;
             auto raw = Local<T>(0);
             auto prior = Local<float>(1);
-            if constexpr (Pack == 8) {
+            if constexpr (Pack == 8 && !SafeCopy) {
                 DataCopy(raw, raw_[i * 6], count * 6);
                 DataCopy(prior, prior_[i * 5], count * 5);
             } else {
@@ -125,7 +125,7 @@ public:
             constexpr uint32_t vm = 0;
             SetFlag<HardEvent::V_MTE3>(vm);
             WaitFlag<HardEvent::V_MTE3>(vm);
-            if constexpr (Pack == 8 && sizeof(T) == 4)
+            if constexpr (Pack == 8 && sizeof(T) == 4 && !SafeCopy)
                 DataCopy(out_[i * 5], dst, count * 5);
             else {
             DataCopyPad(out_[i * 5], dst,
@@ -176,7 +176,7 @@ private:
 };
 
 
-template <typename T, uint32_t Pack, bool Unroll = false>
+template <typename T, uint32_t Pack, bool Unroll = false, bool SafeCopy = false>
 class SmallCandidateDecode {
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -196,7 +196,7 @@ public:
             const uint32_t count = remaining < Pack ? remaining : Pack;
             auto raw = Local<T>(0);
             auto prior = Local<float>(1);
-            if constexpr (Pack == 8) {
+            if constexpr (Pack == 8 && !SafeCopy) {
                 DataCopy(raw, raw_[i * 6], count * 6);
                 DataCopy(prior, prior_[(i % n_) * 5], count * 5);
             } else {
@@ -294,7 +294,7 @@ public:
             constexpr uint32_t vm = 0;
             SetFlag<HardEvent::V_MTE3>(vm);
             WaitFlag<HardEvent::V_MTE3>(vm);
-            if constexpr (Pack == 8 && sizeof(T) == 4)
+            if constexpr (Pack == 8 && sizeof(T) == 4 && !SafeCopy)
                 DataCopy(out_[i * 5], dst, count * 5);
             else {
             DataCopyPad(out_[i * 5], dst,
@@ -746,6 +746,7 @@ private:
 
 
 #include "paired_batch_candidate_decode.h"
+#include "candidate_fixed_small_batch.h"
 
 template <typename DT_RAW_PRED, uint32_t PATH>
 __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
@@ -753,15 +754,36 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 19) {
+    if constexpr (PATH == 26) {
+        ProcessFixedSmallBatch<DT_RAW_PRED>(raw_pred, priors, decoded, data);
+    } else if constexpr (PATH == 24) {
+        SmallCandidateDecode<DT_RAW_PRED, 8, false, true> op;
+        op.Init(raw_pred, priors, decoded, data);
+        op.Process();
+    } else if constexpr (PATH == 21) {
+        const uint32_t groups = (data.candidates + 15) / 16;
+        const uint32_t begin = (groups * GetBlockIdx() / data.cores) * 16;
+        uint32_t end = (groups * (GetBlockIdx() + 1) / data.cores) * 16;
+        if (end > data.candidates) end = data.candidates;
         TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, 1664, false, true, true> op;
+        if (end - begin <= 128) {
+            PairedBatchCandidateDecode<DT_RAW_PRED, 256, false, false, true, true, true> op;
+            op.Init(raw_pred, priors, decoded, data, &pipe);
+            op.Process();
+        } else {
+            PairedBatchCandidateDecode<DT_RAW_PRED, 320, true, false, true, true, true> op;
+            op.Init(raw_pred, priors, decoded, data, &pipe);
+            op.Process();
+        }
+    } else if constexpr (PATH == 19) {
+        TPipe pipe;
+        PairedBatchCandidateDecode<DT_RAW_PRED, 1664, false, true, true, false, true> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 18) {
         TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED, 1408, false, true,
-            sizeof(DT_RAW_PRED) == 4> op;
+            sizeof(DT_RAW_PRED) == 4, false, true> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 15) {
