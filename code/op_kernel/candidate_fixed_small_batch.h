@@ -11,7 +11,7 @@ __aicore__ inline void ProcessFixedSmallBatch(GM_ADDR raw, GM_ADDR prior, GM_ADD
     const uint32_t offset = batch * data.candidates + row;
     const uint32_t remaining = data.candidates - row;
     if (remaining >= 8) {
-        SingleTaskSmallCandidateDecode<T, 8, false, true, true> op;
+        SingleTaskSmallCandidateDecode<T, 8, true, true, true> op;
         op.Init(raw + offset * 6 * sizeof(T), prior + row * 20,
             out + offset * 5 * sizeof(T), data);
         op.Process();
