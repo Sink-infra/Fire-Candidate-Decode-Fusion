@@ -6,7 +6,7 @@ __aicore__ inline void RunFourBatchMediumCandidate(GM_ADDR raw, GM_ADDR prior, G
 {
     InitSocState();
     if constexpr (!Adaptive) {
-        PairedBatchCandidateDecode<T, 512, false, false, true, false, true, true, 4> op;
+        PairedBatchCandidateDecode<T, 512, false, false, true, false, true, true, 4, true, true> op;
         op.Init(raw, prior, out, data, nullptr);
         op.Process();
     } else {
@@ -15,11 +15,11 @@ __aicore__ inline void RunFourBatchMediumCandidate(GM_ADDR raw, GM_ADDR prior, G
         uint32_t end = (groups * (GetBlockIdx() + 1) / data.cores) * 16;
         if (end > data.candidates) end = data.candidates;
         if (end - begin <= 128) {
-            PairedBatchCandidateDecode<T, 512, false, false, true, true, true, true, 4> op;
+            PairedBatchCandidateDecode<T, 512, false, false, true, true, true, true, 4, true, true> op;
             op.Init(raw, prior, out, data, nullptr);
             op.Process();
         } else {
-            PairedBatchCandidateDecode<T, 640, true, false, true, true, true, true, 4> op;
+            PairedBatchCandidateDecode<T, 640, true, false, true, true, true, true, 4, true, true> op;
             op.Init(raw, prior, out, data, nullptr);
             op.Process();
         }
