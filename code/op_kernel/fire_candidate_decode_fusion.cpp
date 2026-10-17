@@ -786,6 +786,17 @@ public:
                         j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             }
             PipeBarrier<PIPE_V>();
+            // Fold the fixed prior geometry into decode coefficients once per tile.
+            Adds(c[6 * Pitch], c[6 * Pitch], -0.5f, count);
+            Adds(c[7 * Pitch], c[7 * Pitch], -0.5f, count);
+            Mul(c[6 * Pitch], c[6 * Pitch], c[8 * Pitch], count);
+            Mul(c[7 * Pitch], c[7 * Pitch], c[8 * Pitch], count);
+            Muls(c[9 * Pitch], c[9 * Pitch], 4.0f, count);
+            Muls(c[10 * Pitch], c[10 * Pitch], 4.0f, count);
+            Mul(c[9 * Pitch], c[9 * Pitch], c[8 * Pitch], count);
+            Mul(c[10 * Pitch], c[10 * Pitch], c[8 * Pitch], count);
+            Muls(c[8 * Pitch], c[8 * Pitch], 2.0f, count);
+            PipeBarrier<PIPE_V>();
             for (uint32_t j = 0; j < 5; ++j)
                 DataCopy(c[(j + 6) * Pitch + HalfTile], c[(j + 6) * Pitch], HalfTile);
             PipeBarrier<PIPE_V>();
@@ -893,17 +904,15 @@ private:
                 Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             PipeBarrier<PIPE_V>();
             if constexpr (Reuse) ReleaseRawAndPrefetch(b, start, validCount);
-            Muls(c, c, 2.0f, Pitch * 4);
-            PipeBarrier<PIPE_V>();
-            Adds(c, c, -0.5f, Pitch * 2);
+            // x/y use the folded stride and grid offsets; w/h use folded anchor scales.
+            Mul(c[0 * Pitch], c[0 * Pitch], c[8 * Pitch], count);
+            Add(c[0 * Pitch], c[0 * Pitch], c[6 * Pitch], count);
+            Mul(c[1 * Pitch], c[1 * Pitch], c[8 * Pitch], count);
+            Add(c[1 * Pitch], c[1 * Pitch], c[7 * Pitch], count);
             Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], Pitch * 2);
             Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);
             PipeBarrier<PIPE_V>();
-            Add(c, c, c[6 * Pitch], Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[9 * Pitch], Pitch * 2);
-            PipeBarrier<PIPE_V>();
-            for (uint32_t j = 0; j < 4; ++j)
-                Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
             if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
             auto dst = At<T>(SharedAddr, Tile * 5, TPosition::VECOUT);
