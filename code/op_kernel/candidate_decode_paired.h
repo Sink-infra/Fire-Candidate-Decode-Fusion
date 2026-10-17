@@ -4,7 +4,7 @@
 
 using namespace AscendC;
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, uint32_t BatchGroup = 2>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, uint32_t BatchGroup = 2, bool BlockedRaw = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / BatchGroup;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -32,14 +32,14 @@ public:
         auto pi = At<int32_t>(PriorIdxAddr, HalfTile);
         if constexpr (FastRamp) {
             BuildRampCache();
-            FillRamp(ri, Tile);
+            if constexpr (!BlockedRaw) FillRamp(ri, Tile);
             FillRamp(At<int32_t>(PriorIdxAddr, PriorRows), PriorRows);
         } else {
-        CreateVecIndex(ri, int32_t(0), Tile);
+        if constexpr (!BlockedRaw) CreateVecIndex(ri, int32_t(0), Tile);
         CreateVecIndex(pi, int32_t(0), HalfTile);
         }
         if constexpr (sizeof(T) == 2) PipeBarrier<PIPE_V>();
-        Muls(ri, ri, int32_t(24), Tile);
+        if constexpr (!BlockedRaw) Muls(ri, ri, int32_t(24), Tile);
         Muls(pi, pi, int32_t(20), HalfTile);
         auto seq = At<int32_t>(ColumnAddr, Pitch * 11);
         auto row = seq[Tile * 5];
@@ -56,12 +56,49 @@ public:
         Muls(row, row, int32_t(4 - 20 * Pitch), seedCount);
         if constexpr (sizeof(T) == 2) PipeBarrier<PIPE_V>();
         Add(index, seq, row, seedCount);
+        if constexpr (BlockedRaw) {
+            auto quarter = At<int32_t>(ColumnAddr + Tile * 24, seedCount);
+            FillShortRamp(row, seedCount);
+            Muls(row, row, int32_t(13108), seedCount);
+            ShiftRight(row, row, int32_t(16), seedCount);
+            ShiftRight(quarter, row, int32_t(2), seedCount);
+            Muls(row, row, int32_t(60), seedCount);
+            Muls(quarter, quarter, int32_t(252), seedCount);
+            Add(index, index, row, seedCount);
+            Sub(index, index, quarter, seedCount);
+        }
         if constexpr (sizeof(T) == 2) PipeBarrier<PIPE_V>();
         for (uint32_t filled = seedCount; filled < Tile * 5; filled *= 2) {
             const uint32_t remaining = Tile * 5 - filled;
             const uint32_t count = filled < remaining ? filled : remaining;
             Adds(index[filled], index, int32_t(filled / 5 * 4), count);
             if constexpr (sizeof(T) == 2) PipeBarrier<PIPE_V>();
+        }
+        if constexpr (BlockedRaw) {
+            FillShortRamp(pi, PriorRows);
+            auto lo = At<int32_t>(ColumnAddr, PriorRows);
+            auto hi = At<int32_t>(ColumnAddr + PriorRows * 4, PriorRows);
+            ShiftRight(lo, pi, int32_t(4), PriorRows);
+            ShiftRight(hi, pi, int32_t(6), PriorRows);
+            Muls(pi, pi, int32_t(4), PriorRows);
+            Muls(lo, lo, int32_t(63), PriorRows);
+            Muls(hi, hi, int32_t(60), PriorRows);
+            Sub(pi, pi, lo, PriorRows);
+            Add(pi, pi, hi, PriorRows);
+            Muls(pi, pi, int32_t(20), PriorRows);
+            const uint64_t input = At<float>(Reuse ? 0 : FloatAddr, Tile * 6).GetPhyAddr();
+            const uint64_t columns = At<float>(ColumnAddr, Pitch * 11).GetPhyAddr();
+            for (uint32_t phase = 0; phase < 3; ++phase) {
+                for (uint32_t i = 0; i < 16; ++i)
+                    blockSrc_[phase * 16 + i] = input + (i * 3 + phase) * 32;
+                for (uint32_t lane = 0; lane < 8; ++lane) {
+                    const uint32_t value = phase * 8 + lane;
+                    blockDst_[phase * 16 + lane * 2] = columns +
+                        ((value % 6) * Pitch + (value / 6) * 16) * 4;
+                    blockDst_[phase * 16 + lane * 2 + 1] =
+                        blockDst_[phase * 16 + lane * 2] + 32;
+                }
+            }
         }
         Duplicate(At<float>(OneAddr, 64), 2.0f, 64);
         if constexpr (sizeof(T) == 2) PipeBarrier<PIPE_V>();
@@ -136,6 +173,17 @@ private:
         Muls(steps, steps, int32_t(64), 192);
         if constexpr (sizeof(T) == 2) PipeBarrier<PIPE_V>();
     }
+    __aicore__ inline void FillShortRamp(LocalTensor<int32_t> target, uint32_t elements)
+    {
+        auto seed = At<int32_t>(OneAddr, 8);
+        Brcb(target, seed, uint8_t(1), BrcbRepeatParams{1, 8});
+        Muls(target, target, int32_t(8), 64);
+        Add(target, target, seed, uint64_t(64), uint8_t(1), {1, 1, 0, 8, 8, 0});
+        for (uint32_t filled = 64; filled < elements; filled *= 2) {
+            const uint32_t count = elements - filled < filled ? elements - filled : filled;
+            Adds(target[filled], target, int32_t(filled), count);
+        }
+    }
     __aicore__ inline void FillRamp(LocalTensor<int32_t> target, uint32_t elements)
     {
         const uint32_t repeats = (elements + 63) / 64;
@@ -196,8 +244,21 @@ private:
             auto c = At<float>(ColumnAddr, Pitch * 11);
             const auto ri = At<uint32_t>(RawIdxAddr, Tile);
 
-            for (uint32_t j = 0; j < 6; ++j)
-                Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
+            if constexpr (BlockedRaw) {
+                PipeBarrier<PIPE_V>();
+                TransDataTo5HDParams params;
+                params.dstHighHalf = false;
+                params.srcHighHalf = false;
+                params.repeatTimes = Tile / 64;
+                params.dstRepStride = 8;
+                params.srcRepStride = 48;
+                for (uint32_t phase = 0; phase < 3; ++phase)
+                    TransDataTo5HD<float>(&blockDst_[phase * 16], &blockSrc_[phase * 16], params);
+                PipeBarrier<PIPE_V>();
+            } else {
+                for (uint32_t j = 0; j < 6; ++j)
+                    Gather(c[j * Pitch], sig, ri, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
+            }
             if constexpr (sizeof(T) == 2) PipeBarrier<PIPE_V>();
             if constexpr (Reuse) ReleaseRawAndPrefetch(b, start, validCount);
             Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);
@@ -243,6 +304,7 @@ private:
 
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
+    uint64_t blockSrc_[BlockedRaw ? 48 : 1], blockDst_[BlockedRaw ? 48 : 1];
     uint32_t batch_, n_, cores_;
     static constexpr int32_t rawReady_ = 2;
     static constexpr int32_t priorReady_ = 3;

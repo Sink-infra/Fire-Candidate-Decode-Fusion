@@ -42,8 +42,10 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 8 || PATH == 9) {
+        if constexpr (PATH == 9 && sizeof(DT_RAW_PRED) == 4) InitSocState();
         PairedBatchCandidateDecode<DT_RAW_PRED, PATH == 8 ? 1408 : 1664,
-            false, PATH == 9, sizeof(DT_RAW_PRED) == 4> op;
+            false, PATH == 9, sizeof(DT_RAW_PRED) == 4, 2,
+            PATH == 9 && sizeof(DT_RAW_PRED) == 4> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
     } else if constexpr (PATH == 0) {
