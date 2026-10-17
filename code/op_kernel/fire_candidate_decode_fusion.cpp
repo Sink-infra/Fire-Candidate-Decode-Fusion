@@ -804,13 +804,13 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         }
     } else if constexpr (PATH == 19) {
         TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, 1664, false, true, true, false, true> op;
+        PairedBatchCandidateDecode<DT_RAW_PRED, 1664, false, true, true, false, true, false, 2, true> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 18) {
         TPipe pipe;
         PairedBatchCandidateDecode<DT_RAW_PRED, 1408, false, true,
-            sizeof(DT_RAW_PRED) == 4, false, true> op;
+            sizeof(DT_RAW_PRED) == 4, false, true, false, 2, true> op;
         op.Init(raw_pred, priors, decoded, data, &pipe);
         op.Process();
     } else if constexpr (PATH == 15) {
