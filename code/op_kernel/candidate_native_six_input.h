@@ -1,6 +1,6 @@
 #pragma once
 
-template <uint32_t Tile, uint32_t Pitch, bool StaticEvents>
+template <uint32_t Tile, uint32_t Pitch, uint32_t BatchGroup, bool StaticEvents>
 __aicore__ inline void BuildNativeSixCandidateIndices(LocalTensor<int32_t> sequence,
     LocalTensor<int32_t> scratch, LocalTensor<int32_t> priorIndex,
     LocalTensor<int32_t> outputIndex, TPipe *pipe)
@@ -9,8 +9,15 @@ __aicore__ inline void BuildNativeSixCandidateIndices(LocalTensor<int32_t> seque
     constexpr uint32_t Quarter = Rows / 4;
     static_assert(Rows % 32 == 0);
     BuildDoublingCandidateIndex<320, StaticEvents>(sequence, sequence[320], pipe);
-    Muls(priorIndex, sequence, int32_t(80), Quarter);
+    constexpr uint32_t PriorBaseRows = Tile / BatchGroup / 4;
+    static_assert(PriorBaseRows % 8 == 0);
+    Muls(priorIndex, sequence, int32_t(80), PriorBaseRows);
     PipeBarrier<PIPE_V>();
+    if constexpr (BatchGroup > 2) {
+        for (uint32_t j = 1; j < BatchGroup / 2; ++j)
+            DataCopy(priorIndex[j * PriorBaseRows], priorIndex, PriorBaseRows);
+        PipeBarrier<PIPE_V>();
+    }
     for (uint32_t j = 1; j < 4; ++j)
         Adds(priorIndex[j * Quarter], priorIndex, int32_t(j * 20), Quarter);
     PipeBarrier<PIPE_V>();
