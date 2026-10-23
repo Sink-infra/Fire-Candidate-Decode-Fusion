@@ -63,18 +63,18 @@ __aicore__ inline void GatherNativeEightCandidates()
 }
 
 template <uint32_t Tile, uint32_t Pitch, uint32_t ColumnAddr,
-    uint32_t PackedAddr, uint32_t Phase>
+    uint32_t PackedAddr, uint32_t Phase, bool FullStripe = false>
 __aicore__ inline void NativeFiveCandidatePhase()
 {
     constexpr uint32_t Rows = Tile / 2;
-    constexpr uint32_t Quarter = Rows / 8;
+    constexpr uint32_t Quarter = FullStripe ? Tile / 8 : Rows / 8;
     uint64_t sources[16], targets[16];
     #pragma unroll
     for (uint32_t j = 0; j < 8; ++j) {
         const uint32_t field = (Phase * 8 + j) % 5;
         const uint32_t subrow = (Phase * 8 + j) / 5;
         sources[j] = ColumnAddr + (field * Pitch + subrow * Quarter) * 4;
-        sources[j + 8] = sources[j] + Rows * 4;
+        sources[j + 8] = sources[j] + (FullStripe ? Tile / 16 : Rows) * 4;
         targets[j * 2] = PackedAddr + j * 160 + Phase * 32;
         targets[j * 2 + 1] = targets[j * 2] + Rows * 20;
     }
@@ -82,12 +82,12 @@ __aicore__ inline void NativeFiveCandidatePhase()
         TransDataTo5HDParams{false, false, uint8_t(Rows / 64), 40, 1});
 }
 
-template <uint32_t Tile, uint32_t Pitch, uint32_t ColumnAddr, uint32_t PackedAddr>
+template <uint32_t Tile, uint32_t Pitch, uint32_t ColumnAddr, uint32_t PackedAddr, bool FullStripe = false>
 __aicore__ inline void PackNativeFiveCandidates()
 {
-    NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 0>();
-    NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 1>();
-    NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 2>();
-    NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 3>();
-    NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 4>();
+    NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 0, FullStripe>();
+    NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 1, FullStripe>();
+    NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 2, FullStripe>();
+    NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 3, FullStripe>();
+    NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 4, FullStripe>();
 }

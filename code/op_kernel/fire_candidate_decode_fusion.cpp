@@ -16,15 +16,23 @@ using namespace AscendC;
 #include "grouped_medium_candidate_entry.h"
 #include "grouped_large_candidate_entry.h"
 #include "coarse_medium_candidate_entry.h"
+#include "single_group_medium_candidate_decode.h"
 
 template <typename DT_RAW_PRED, uint32_t PATH>
 __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
     GM_ADDR priors, GM_ADDR decoded, GM_ADDR workspace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
+    if constexpr (PATH == 34) {
+        InitSocState();
+        const uint32_t candidates = uint32_t(GetBlockNum()) * 256;
+        const uint32_t begin = uint32_t(GetBlockIdx()) * 256;
+        SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1024> op;
+        op.Run(raw_pred, priors, decoded, candidates, begin, 256);
+    } else {
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
     if constexpr (PATH == 33) {
-        RunCoarseMediumCandidate<DT_RAW_PRED>(raw_pred, priors, decoded, data);
+        RunCoarseMediumCandidate<DT_RAW_PRED, sizeof(DT_RAW_PRED) == 2>(raw_pred, priors, decoded, data);
     } else if constexpr (PATH == 31 || PATH == 32) {
         RunFourBatchMediumCandidate<DT_RAW_PRED, PATH == 32>(raw_pred, priors, decoded, data);
     } else if constexpr (PATH == 26) {
@@ -110,5 +118,6 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         KernelFireCandidateDecodeFusion<DT_RAW_PRED, 1024> op;
         op.Init(raw_pred, priors, decoded, data);
         op.Process();
+    }
     }
 }
