@@ -3,8 +3,9 @@
 #include "candidate_pattern_index.h"
 #include "candidate_native_six_input.h"
 #include "candidate_native_five_pack.h"
+#include "candidate_native_prior.h"
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false, bool Preload = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false, bool Preload = false, bool NativePrior = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / BatchGroup;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -52,11 +53,12 @@ public:
         auto pi = At<int32_t>(PriorIdxAddr, NativeSix ? Tile / 2 : HalfTile);
         if constexpr (NativeSix) {
             static_assert(BatchGroup == 2 || BatchGroup == 4);
-            if constexpr (NativePack)
+            if constexpr (NativePack) {
+                if constexpr (!NativePrior)
                 BuildNativeEightCandidateIndices<Tile, BatchGroup, StaticEvents>(
                     At<int32_t>(ColumnAddr, Pitch * 11),
                     At<int32_t>(RawIdxAddr, RawIndexRows), pi, pipe);
-            else {
+            } else {
             BuildNativeSixCandidateIndices<Tile, Pitch, BatchGroup, StaticEvents>(
                 At<int32_t>(ColumnAddr, Pitch * 11),
                 At<int32_t>(RawIdxAddr, RawIndexRows), pi,
@@ -137,6 +139,10 @@ public:
             WaitFlag<HardEvent::MTE2_V>(priorReady_);
             auto c = At<float>(ColumnAddr, Pitch * 11);
             const uint32_t priorCount = NativeSix ? Tile / 2 : count;
+            if constexpr (NativePrior) {
+                static_assert(BatchGroup == 4 && NativePack);
+                GatherNativePriorCandidates<Tile, Pitch, SharedAddr, ColumnAddr>();
+            } else {
             for (uint32_t j = 0; j < 5; ++j) {
                 if constexpr (CounterPrior)
                     Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, NativeSix ? Tile / 2 : HalfTile),
@@ -145,8 +151,13 @@ public:
                     Gather(c[(j + 6) * Pitch], prior, At<uint32_t>(PriorIdxAddr, NativeSix ? Tile / 2 : HalfTile),
                         j * 4, uint64_t(64), uint8_t((priorCount + 63) / 64), 8);
             }
+            }
             PipeBarrier<PIPE_V>();
-            if constexpr (NativeSix) {
+            if constexpr (NativePrior) {
+                DataCopy(c[6 * Pitch + Tile / 2], c[6 * Pitch],
+                    DataCopyParams{5, uint16_t(Tile / 16),
+                        uint16_t((Pitch - Tile / 2) / 8), uint16_t((Pitch - Tile / 2) / 8)});
+            } else if constexpr (NativeSix) {
                 for (uint32_t j = 0; j < 5; ++j)
                     DataCopy(c[(j + 6) * Pitch + Tile / 2], c[(j + 6) * Pitch], Tile / 2);
             } else {
