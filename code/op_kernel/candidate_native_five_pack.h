@@ -9,8 +9,10 @@ __aicore__ inline void BuildNativeEightCandidateIndices(LocalTensor<int32_t> seq
     constexpr uint32_t Quarter = Rows / 8;
     constexpr uint32_t BatchRows = Tile / BatchGroup;
     constexpr uint32_t BaseRows = BatchRows / 8;
-    static_assert(BatchGroup == 4 && Rows % 64 == 0 && Quarter % 8 == 0);
-    BuildDoublingCandidateIndex<64, StaticEvents>(sequence, sequence[64], pipe);
+    static_assert((BatchGroup == 2 || BatchGroup == 4) && Rows % 64 == 0 && Quarter % 8 == 0);
+    constexpr uint32_t SeedRows = ((Quarter + 63) / 64) * 64;
+    BuildDoublingCandidateIndex<SeedRows, StaticEvents>(sequence, sequence[SeedRows], pipe);
+    if constexpr (BatchGroup == 4) {
     Muls(scratch, sequence, int32_t((65536 + BaseRows - 1) / BaseRows), Quarter);
     PipeBarrier<PIPE_V>();
     ShiftRight(scratch, scratch, int32_t(16), Quarter);
@@ -19,6 +21,9 @@ __aicore__ inline void BuildNativeEightCandidateIndices(LocalTensor<int32_t> seq
     Muls(scratch, scratch, -int32_t(BatchRows * 20), Quarter);
     PipeBarrier<PIPE_V>();
     Add(priorIndex, priorIndex, scratch, Quarter);
+    } else {
+        Muls(priorIndex, sequence, int32_t(160), Quarter);
+    }
     PipeBarrier<PIPE_V>();
     #pragma unroll
     for (uint32_t j = 1; j < 8; ++j)
