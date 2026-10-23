@@ -102,7 +102,19 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         const uint32_t span = ((groups + cores - 1) / cores) * 16;
         if (span <= 320) PATH = 33;
     }
+    if (data->batch == 4 && data->candidates % 256 == 0) {
+        const uint32_t fullTileCores = data->candidates / 256;
+        if (fullTileCores <= platform.GetCoreNumAiv()) {
+            cores = fullTileCores;
+            PATH = 34;
+        }
+    }
     data->cores = cores;
+    if (PATH == 33 || PATH == 34) {
+        uint32_t shift = 0;
+        while ((1u << shift) < cores) ++shift;
+        data->segments = (1u << shift) == cores ? shift : 32;
+    }
     context->SetBlockDim(cores);
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
     ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED, PATH);
