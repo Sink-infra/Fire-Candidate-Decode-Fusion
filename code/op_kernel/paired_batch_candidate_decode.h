@@ -4,7 +4,7 @@
 #include "candidate_native_six_input.h"
 #include "candidate_native_five_pack.h"
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false, bool Preload = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / BatchGroup;
     static constexpr uint32_t Pitch = Tile + 8;
@@ -40,6 +40,13 @@ public:
         outReady_ = pipe->FetchEventID(HardEvent::V_MTE3);
         outFree_ = pipe->FetchEventID(HardEvent::MTE3_V);
         poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
+        }
+        if constexpr (Preload) {
+            const uint32_t groups = (n_ + 15) / 16;
+            const uint32_t begin = (groups * GetBlockIdx() / cores_) * 16;
+            uint32_t end = (groups * (GetBlockIdx() + 1) / cores_) * 16;
+            if (end > n_) end = n_;
+            if (begin < end) PrefetchTile(begin, end - begin < HalfTile ? end - begin : HalfTile);
         }
         auto ri = At<int32_t>(RawIdxAddr, RawIndexRows);
         auto pi = At<int32_t>(PriorIdxAddr, NativeSix ? Tile / 2 : HalfTile);
@@ -119,10 +126,14 @@ public:
                 poolPending_ = false;
             }
             auto prior = At<float>(SharedAddr, HalfTile * 5, TPosition::VECIN);
+            if constexpr (Preload) {
+                if (start != begin) PrefetchTile(start, count);
+            } else {
             DataCopyPad(prior, prior_[start * 5],
                 DataCopyExtParams{1, count * 20, 0, 0, 0},
                 DataCopyPadExtParams<float>{false, 0, 0, 0});
             SetFlag<HardEvent::MTE2_V>(priorReady_);
+            }
             WaitFlag<HardEvent::MTE2_V>(priorReady_);
             auto c = At<float>(ColumnAddr, Pitch * 11);
             const uint32_t priorCount = NativeSix ? Tile / 2 : count;
@@ -145,7 +156,7 @@ public:
                     DataCopy(c[(j + 6) * Pitch + q * HalfTile], c[(j + 6) * Pitch], HalfTile);
             }
             PipeBarrier<PIPE_V>();
-            LoadRaw(0, start, count);
+            if constexpr (!Preload) LoadRaw(0, start, count);
             for (uint32_t b = 0; b < batch_; b += BatchGroup) {
                 WaitFlag<HardEvent::MTE2_V>(rawReady_);
                 auto raw = At<T>(0, Tile * 6, TPosition::VECIN);
@@ -162,6 +173,14 @@ public:
         }
     }
 private:
+    __aicore__ inline void PrefetchTile(uint32_t start, uint32_t count)
+    {
+        DataCopyPad(At<float>(SharedAddr, HalfTile * 5, TPosition::VECIN), prior_[start * 5],
+            DataCopyExtParams{1, count * 20, 0, 0, 0},
+            DataCopyPadExtParams<float>{false, 0, 0, 0});
+        SetFlag<HardEvent::MTE2_V>(priorReady_);
+        LoadRaw(0, start, count);
+    }
     __aicore__ inline void BuildRampCache()
     {
         auto seed = At<int32_t>(OneAddr, 8);
