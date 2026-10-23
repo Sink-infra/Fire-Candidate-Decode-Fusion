@@ -772,6 +772,7 @@ private:
 #include "candidate_fixed_small_batch.h"
 #include "grouped_medium_candidate_entry.h"
 #include "grouped_large_candidate_entry.h"
+#include "coarse_medium_candidate_entry.h"
 
 template <typename DT_RAW_PRED, uint32_t PATH>
 __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
@@ -779,7 +780,9 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 31 || PATH == 32) {
+    if constexpr (PATH == 33) {
+        RunCoarseMediumCandidate<DT_RAW_PRED>(raw_pred, priors, decoded, data);
+    } else if constexpr (PATH == 31 || PATH == 32) {
         RunFourBatchMediumCandidate<DT_RAW_PRED, PATH == 32>(raw_pred, priors, decoded, data);
     } else if constexpr (PATH == 26) {
         InitSocState();
