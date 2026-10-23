@@ -771,6 +771,7 @@ private:
 #include "paired_batch_candidate_decode.h"
 #include "candidate_fixed_small_batch.h"
 #include "grouped_medium_candidate_entry.h"
+#include "grouped_large_candidate_entry.h"
 
 template <typename DT_RAW_PRED, uint32_t PATH>
 __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
@@ -803,16 +804,9 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
             op.Process();
         }
     } else if constexpr (PATH == 19) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, 1664, false, true, true, false, true, false, 2, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
+        RunNativeLargeCandidate<DT_RAW_PRED, 1664>(raw_pred, priors, decoded, data);
     } else if constexpr (PATH == 18) {
-        TPipe pipe;
-        PairedBatchCandidateDecode<DT_RAW_PRED, 1408, false, true,
-            sizeof(DT_RAW_PRED) == 4, false, true, false, 2, true> op;
-        op.Init(raw_pred, priors, decoded, data, &pipe);
-        op.Process();
+        RunNativeLargeCandidate<DT_RAW_PRED, 1408>(raw_pred, priors, decoded, data);
     } else if constexpr (PATH == 15) {
         InitSocState();
         SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true> op;
