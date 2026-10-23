@@ -4,11 +4,13 @@
 #include "candidate_native_six_input.h"
 #include "candidate_native_five_pack.h"
 #include "candidate_native_prior.h"
+#include "candidate_denominator_geometry.h"
+#include "candidate_native_half_input.h"
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false, bool Preload = false, bool NativePrior = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false, bool Preload = false, bool NativePrior = false, bool FuseConfidence = false, bool HalfNativeInput = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / BatchGroup;
-    static constexpr uint32_t Pitch = Tile + 8;
+    static constexpr uint32_t Pitch = Tile + (HalfNativeInput ? 16 : 8);
     static constexpr bool Reuse = sizeof(T) == 4;
     static constexpr uint32_t RawBytes = Tile * 6 * sizeof(T);
     static constexpr uint32_t FloatAddr = RawBytes;
@@ -16,18 +18,21 @@ class PairedBatchCandidateDecode {
     static constexpr uint32_t SharedBytes = Tile * 5 * sizeof(T);
     static constexpr uint32_t ColumnAddr = SharedAddr + SharedBytes;
     static constexpr uint32_t OneAddr = ColumnAddr + Pitch * 44;
-    static constexpr uint32_t RawIdxAddr = OneAddr + 256;
+    static constexpr uint32_t RawIdxAddr = OneAddr + (FuseConfidence ? 512 : 256);
     static constexpr uint32_t RawIndexRows = NativeSix && Tile < 640 ? 640 : Tile;
     static constexpr uint32_t PriorIdxAddr = RawIdxAddr + RawIndexRows * 4;
     static constexpr uint32_t PriorRows = NativeSix ? Tile / 2 : (FastRamp ? ((HalfTile + 63) / 64) * 64 : HalfTile);
     static constexpr uint32_t PackIdxAddr = PriorIdxAddr + PriorRows * 4;
     static constexpr uint32_t RampCacheAddr = RowScratch ? ColumnAddr + Tile * 20 : 0;
+    static_assert(!HalfNativeInput || (sizeof(T) == 2 && NativePack && NativePrior && Tile % 128 == 0));
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
-                               const FireCandidateDecodeFusionTilingData &d, TPipe *pipe)
+                               const FireCandidateDecodeFusionTilingData &d, TPipe *pipe,
+                               uint32_t spanBegin = 0, uint32_t spanEnd = 0)
     {
         pipe_ = pipe;
         batch_ = d.batch; n_ = d.candidates; cores_ = d.cores;
+        spanBegin_ = spanBegin; spanEnd_ = spanEnd;
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
@@ -43,10 +48,13 @@ public:
         poolFree_ = pipe->FetchEventID(HardEvent::MTE3_MTE2);
         }
         if constexpr (Preload) {
+            uint32_t begin = spanBegin_, end = spanEnd_;
+            if constexpr (!(NativePrior && BatchGroup == 4)) {
             const uint32_t groups = (n_ + 15) / 16;
-            const uint32_t begin = (groups * GetBlockIdx() / cores_) * 16;
-            uint32_t end = (groups * (GetBlockIdx() + 1) / cores_) * 16;
+            begin = (groups * GetBlockIdx() / cores_) * 16;
+            end = (groups * (GetBlockIdx() + 1) / cores_) * 16;
             if (end > n_) end = n_;
+            }
             if (begin < end) PrefetchTile(begin, end - begin < HalfTile ? end - begin : HalfTile);
         }
         auto ri = At<int32_t>(RawIdxAddr, RawIndexRows);
@@ -109,6 +117,7 @@ public:
         }
         }
         Duplicate(At<float>(OneAddr, 64), Tile >= 1024 ? 2.0f : 1.0f, 64);
+        if constexpr (FuseConfidence) Duplicate(At<float>(OneAddr + 256, 64), 1.0f, 64);
         PipeBarrier<PIPE_V>();
         if constexpr (FastRamp && !RowScratch) {
             SetFlag<HardEvent::V_MTE2>(rawFree_);
@@ -117,10 +126,13 @@ public:
     }
     __aicore__ inline void Process()
     {
-        const uint32_t groups = (n_ + 15) / 16;
-        const uint32_t begin = (groups * GetBlockIdx() / cores_) * 16;
-        uint32_t end = (groups * (GetBlockIdx() + 1) / cores_) * 16;
-        if (end > n_) end = n_;
+        uint32_t begin = spanBegin_, end = spanEnd_;
+        if constexpr (!(NativePrior && BatchGroup == 4)) {
+            const uint32_t groups = (n_ + 15) / 16;
+            begin = (groups * GetBlockIdx() / cores_) * 16;
+            end = (groups * (GetBlockIdx() + 1) / cores_) * 16;
+            if (end > n_) end = n_;
+        }
         for (uint32_t start = begin; start < end; start += HalfTile) {
             const uint32_t count = start + HalfTile <= end ? HalfTile : end - start;
             if (poolPending_) {
@@ -140,8 +152,8 @@ public:
             auto c = At<float>(ColumnAddr, Pitch * 11);
             const uint32_t priorCount = NativeSix ? Tile / 2 : count;
             if constexpr (NativePrior) {
-                static_assert(BatchGroup == 4 && NativePack);
-                GatherNativePriorCandidates<Tile, Pitch, SharedAddr, ColumnAddr>();
+                static_assert((BatchGroup == 2 || BatchGroup == 4) && NativePack);
+                GatherNativePriorCandidates<Tile, Pitch, SharedAddr, ColumnAddr, BatchGroup, HalfNativeInput>();
             } else {
             for (uint32_t j = 0; j < 5; ++j) {
                 if constexpr (CounterPrior)
@@ -154,9 +166,18 @@ public:
             }
             PipeBarrier<PIPE_V>();
             if constexpr (NativePrior) {
-                DataCopy(c[6 * Pitch + Tile / 2], c[6 * Pitch],
-                    DataCopyParams{5, uint16_t(Tile / 16),
-                        uint16_t((Pitch - Tile / 2) / 8), uint16_t((Pitch - Tile / 2) / 8)});
+                if constexpr (BatchGroup == 4) {
+                    if constexpr (HalfNativeInput) {
+                        for (uint32_t field = 0; field < 5; ++field)
+                            DataCopy(c[(field + 6) * Pitch + Tile / 16], c[(field + 6) * Pitch],
+                                DataCopyParams{8, uint16_t(Tile / 128),
+                                    uint16_t(Tile / 128), uint16_t(Tile / 128)});
+                    } else {
+                        DataCopy(c[6 * Pitch + Tile / 2], c[6 * Pitch],
+                            DataCopyParams{5, uint16_t(Tile / 16),
+                                uint16_t((Pitch - Tile / 2) / 8), uint16_t((Pitch - Tile / 2) / 8)});
+                    }
+                }
             } else if constexpr (NativeSix) {
                 for (uint32_t j = 0; j < 5; ++j)
                     DataCopy(c[(j + 6) * Pitch + Tile / 2], c[(j + 6) * Pitch], Tile / 2);
@@ -254,6 +275,15 @@ private:
     {
             constexpr uint32_t count = Tile;
             LocalTensor<float> sig;
+            if constexpr (HalfNativeInput) {
+                GatherNativeHalfCandidates<Tile, Pitch, 0, FloatAddr>();
+                PipeBarrier<PIPE_V>();
+                ReleaseRawAndPrefetch(b, start, validCount);
+                sig = At<float>(ColumnAddr, Pitch * 6);
+                Cast(sig, At<half>(FloatAddr, Pitch * 6), RoundMode::CAST_NONE, Pitch * 6);
+                PipeBarrier<PIPE_V>();
+                ActivateNativeHalfColumns<Pitch * 6, FuseConfidence>(sig, At<float>(OneAddr, 64));
+            } else {
             if constexpr (Reuse) {
                 sig = raw;
             } else {
@@ -271,13 +301,17 @@ private:
             PipeBarrier<PIPE_V>();
             Adds(sig, sig, 1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             PipeBarrier<PIPE_V>();
-            Div(sig, At<float>(OneAddr, 64), sig, uint64_t(64),
-                uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
-            PipeBarrier<PIPE_V>();
+            if constexpr (!FuseConfidence) {
+                Div(sig, At<float>(OneAddr, 64), sig, uint64_t(64),
+                    uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
+                PipeBarrier<PIPE_V>();
+            }
+            }
             auto c = At<float>(ColumnAddr, Pitch * 11);
             const auto ri = At<uint32_t>(RawIdxAddr, Tile);
 
-            if constexpr (NativePack)
+            if constexpr (HalfNativeInput) {}
+            else if constexpr (NativePack)
                 GatherNativeEightCandidates<Tile, Pitch, Reuse ? 0 : FloatAddr, ColumnAddr>();
             else if constexpr (NativeSix)
                 GatherNativeSixCandidates<Tile, Pitch, Reuse ? 0 : FloatAddr, ColumnAddr>();
@@ -287,6 +321,10 @@ private:
             }
             PipeBarrier<PIPE_V>();
             if constexpr (Reuse) ReleaseRawAndPrefetch(b, start, validCount);
+            if constexpr (FuseConfidence) {
+                DecodeCandidateDenominators<Tile, Pitch>(c,
+                    At<float>(OneAddr, 64), At<float>(OneAddr + 256, 64));
+            } else {
             if constexpr (Tile < 1024) {
                 Muls(c, c, 2.0f, Pitch * 4);
                 PipeBarrier<PIPE_V>();
@@ -303,13 +341,14 @@ private:
             for (uint32_t j = 0; j < 4; ++j)
                 Mul(c[j * Pitch], c[j * Pitch], c[8 * Pitch], count);
             PipeBarrier<PIPE_V>();
+            }
             if (outPending_) WaitFlag<HardEvent::MTE3_V>(outFree_);
             auto dst = At<T>(SharedAddr, Tile * 5, TPosition::VECOUT);
             LocalTensor<float> packed;
             if constexpr (Reuse) packed = dst;
             else packed = At<float>(FloatAddr, Tile * 6);
             if constexpr (NativePack)
-                PackNativeFiveCandidates<Tile, Pitch, ColumnAddr, Reuse ? SharedAddr : FloatAddr>();
+                PackNativeFiveCandidates<Tile, Pitch, ColumnAddr, Reuse ? SharedAddr : FloatAddr, HalfNativeInput>();
             else {
             Gather(packed, c, At<uint32_t>(PackIdxAddr, Tile * 5), 0, uint64_t(64),
                 uint8_t((count * 5 + 63) / 64), 8);
@@ -337,6 +376,7 @@ private:
     GlobalTensor<T> raw_, out_;
     GlobalTensor<float> prior_;
     uint32_t batch_, n_, cores_;
+    uint32_t spanBegin_, spanEnd_;
     int32_t rawReady_, rawFree_, priorReady_, outReady_, outFree_, poolFree_;
     bool rawUsed_ = false, outPending_ = false, poolPending_ = false;
 };
