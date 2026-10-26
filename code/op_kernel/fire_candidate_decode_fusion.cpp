@@ -53,6 +53,13 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         const uint32_t candidates = uint32_t(uint64_t(1) << (63 - ScalarCountLeadingZero(bound))) + (Tail ? 1u : 0u);
         const FireCandidateDecodeFusionTilingData data{Key % 2 == 0 ? 4u : 8u, candidates, cores, 0};
         RunNativeLargeCandidate<DT_RAW_PRED, Tile>(raw_pred, priors, decoded, data);
+    } else if constexpr (PATH >= 44 && PATH <= 50) {
+        InitSocState();
+        constexpr uint32_t Batch = PATH - 42;
+        const uint32_t cores = uint32_t(GetBlockNum());
+        const uint32_t candidates = (cores / Batch - 1) * 8 + 1;
+        const FireCandidateDecodeFusionTilingData data{Batch, candidates, cores, 0};
+        ProcessFixedSmallBatch<DT_RAW_PRED>(raw_pred, priors, decoded, data);
     } else {
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
     if constexpr (PATH == 33) {
