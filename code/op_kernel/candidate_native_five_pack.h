@@ -1,5 +1,5 @@
 #pragma once
-#include "candidate_doubling_index.h"
+#include "candidate_index_ramp.h"
 
 template <uint32_t Tile, uint32_t BatchGroup, bool StaticEvents>
 __aicore__ inline void BuildNativeEightCandidateIndices(LocalTensor<int32_t> sequence,

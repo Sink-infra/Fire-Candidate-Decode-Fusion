@@ -1,13 +1,13 @@
 #pragma once
-#include "candidate_doubling_index.h"
-#include "candidate_pattern_index.h"
+#include "candidate_index_ramp.h"
 #include "candidate_native_six_input.h"
 #include "candidate_native_five_pack.h"
 #include "candidate_native_prior.h"
 #include "candidate_denominator_geometry.h"
 #include "candidate_native_half_input.h"
+#include "candidate_transfer.h"
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false, bool Preload = false, bool NativePrior = false, bool FuseConfidence = false, bool HalfNativeInput = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false, bool Preload = false, bool NativePrior = false, bool FuseConfidence = false, bool HalfNativeInput = false, bool AlignedTransfers = false, bool SkewStride = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / BatchGroup;
     static constexpr uint32_t Pitch = Tile + (HalfNativeInput ? 16 : 8);
@@ -143,9 +143,8 @@ public:
             if constexpr (Preload) {
                 if (start != begin) PrefetchTile(start, count);
             } else {
-            DataCopyPad(prior, prior_[start * 5],
-                DataCopyExtParams{1, count * 20, 0, 0, 0},
-                DataCopyPadExtParams<float>{false, 0, 0, 0});
+            CopyCandidateInput<float, AlignedTransfers>(prior, prior_, start * 5,
+                1, count * 5, count * 5, count * 5);
             SetFlag<HardEvent::MTE2_V>(priorReady_);
             }
             WaitFlag<HardEvent::MTE2_V>(priorReady_);
@@ -188,6 +187,10 @@ public:
                     DataCopy(c[(j + 6) * Pitch + q * HalfTile], c[(j + 6) * Pitch], HalfTile);
             }
             PipeBarrier<PIPE_V>();
+            if constexpr (SkewStride) {
+                DataCopy(At<float>(OneAddr + 544, Tile), c[8 * Pitch], Tile);
+                PipeBarrier<PIPE_V>();
+            }
             if constexpr (!Preload) LoadRaw(0, start, count);
             for (uint32_t b = 0; b < batch_; b += BatchGroup) {
                 WaitFlag<HardEvent::MTE2_V>(rawReady_);
@@ -207,9 +210,9 @@ public:
 private:
     __aicore__ inline void PrefetchTile(uint32_t start, uint32_t count)
     {
-        DataCopyPad(At<float>(SharedAddr, HalfTile * 5, TPosition::VECIN), prior_[start * 5],
-            DataCopyExtParams{1, count * 20, 0, 0, 0},
-            DataCopyPadExtParams<float>{false, 0, 0, 0});
+        CopyCandidateInput<float, AlignedTransfers>(
+            At<float>(SharedAddr, HalfTile * 5, TPosition::VECIN), prior_, start * 5,
+            1, count * 5, count * 5, count * 5);
         SetFlag<HardEvent::MTE2_V>(priorReady_);
         LoadRaw(0, start, count);
     }
@@ -257,11 +260,8 @@ private:
     {
         if (rawUsed_) WaitFlag<HardEvent::V_MTE2>(rawFree_);
         auto raw = At<T>(0, Tile * 6, TPosition::VECIN);
-        const uint32_t bytes = count * 6 * uint32_t(sizeof(T));
-        const uint32_t localGap = (HalfTile * 6 * uint32_t(sizeof(T)) - ((bytes + 31) / 32) * 32) / 32;
-        DataCopyPad(raw, raw_[(b * n_ + start) * 6],
-            DataCopyExtParams{uint16_t(BatchGroup), bytes, (n_ - count) * 6 * uint32_t(sizeof(T)), localGap, 0},
-            DataCopyPadExtParams<T>{false, 0, 0, 0});
+        CopyCandidateInput<T, AlignedTransfers>(raw, raw_, (b * n_ + start) * 6,
+            uint16_t(BatchGroup), count * 6, HalfTile * 6, n_ * 6);
         SetFlag<HardEvent::MTE2_V>(rawReady_);
         rawUsed_ = true;
     }
@@ -322,7 +322,11 @@ private:
             PipeBarrier<PIPE_V>();
             if constexpr (Reuse) ReleaseRawAndPrefetch(b, start, validCount);
             if constexpr (FuseConfidence) {
-                DecodeCandidateDenominators<Tile, Pitch>(c,
+                if constexpr (SkewStride)
+                    DecodeCandidateDenominators<Tile, Pitch>(c,
+                        At<float>(OneAddr, 64), At<float>(OneAddr + 256, 64),
+                        At<float>(OneAddr + 544, Tile));
+                else DecodeCandidateDenominators<Tile, Pitch>(c,
                     At<float>(OneAddr, 64), At<float>(OneAddr + 256, 64));
             } else {
             if constexpr (Tile < 1024) {
@@ -360,10 +364,8 @@ private:
                 DataCopy(dst, packed, ((count * 5 + 7) / 8) * 8);
             SetFlag<HardEvent::V_MTE3>(outReady_);
             WaitFlag<HardEvent::V_MTE3>(outReady_);
-            const uint32_t bytes = validCount * 5 * uint32_t(sizeof(T));
-            const uint32_t localGap = (HalfTile * 5 * uint32_t(sizeof(T)) - ((bytes + 31) / 32) * 32) / 32;
-            DataCopyPad(out_[(b * n_ + start) * 5], dst,
-                DataCopyExtParams{uint16_t(BatchGroup), bytes, localGap, (n_ - validCount) * 5 * uint32_t(sizeof(T)), 0});
+            CopyCandidateOutput<T, AlignedTransfers>(out_, dst, (b * n_ + start) * 5,
+                uint16_t(BatchGroup), validCount * 5, HalfTile * 5, n_ * 5);
             SetFlag<HardEvent::MTE3_V>(outFree_);
             outPending_ = true;
             if (b + BatchGroup >= batch_) {

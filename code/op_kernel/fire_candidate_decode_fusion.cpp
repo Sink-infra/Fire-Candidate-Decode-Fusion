@@ -8,6 +8,7 @@ using namespace AscendC;
 #include "candidate_grouped_tail.h"
 
 #include "small_candidate_decode.h"
+#include "native_small_candidate_decode.h"
 #include "medium_candidate_decode.h"
 #include "generic_candidate_decode.h"
 
@@ -23,7 +24,11 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
     GM_ADDR priors, GM_ADDR decoded, GM_ADDR workspace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
-    if constexpr (PATH == 34) {
+    if constexpr (PATH == 15) {
+        InitSocState();
+        NativeSmallCandidateDecode<DT_RAW_PRED> op;
+        op.Run(raw_pred, priors, decoded);
+    } else if constexpr (PATH == 34) {
         InitSocState();
         const uint32_t candidates = uint32_t(GetBlockNum()) * 256;
         const uint32_t begin = uint32_t(GetBlockIdx()) * 256;
@@ -61,13 +66,6 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         RunNativeLargeCandidate<DT_RAW_PRED, 1664>(raw_pred, priors, decoded, data);
     } else if constexpr (PATH == 18) {
         RunNativeLargeCandidate<DT_RAW_PRED, 1408>(raw_pred, priors, decoded, data);
-    } else if constexpr (PATH == 15) {
-        InitSocState();
-        const uint32_t offset = GetBlockIdx() * 4;
-        SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true, true> op;
-        op.Init(raw_pred + offset * 6 * sizeof(DT_RAW_PRED), priors + offset * 20,
-            decoded + offset * 5 * sizeof(DT_RAW_PRED), data);
-        op.Process();
     } else if constexpr (PATH == 14) {
         SmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);
