@@ -124,6 +124,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         ((data->candidates - 1) & (data->candidates - 2)) == 0) {
         PATH = (PATH == 18 ? 40 : 42) + (data->batch == 8 ? 1 : 0);
     }
+    if (PATH == 26 && data->candidates % 8 == 1) PATH = 42 + data->batch;
     data->cores = cores;
     if (PATH == 33 || PATH == 34) {
         uint32_t shift = 0;
