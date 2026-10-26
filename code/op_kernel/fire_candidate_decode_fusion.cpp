@@ -8,6 +8,7 @@ using namespace AscendC;
 #include "candidate_grouped_tail.h"
 
 #include "small_candidate_decode.h"
+#include "native_small_candidate_decode.h"
 #include "medium_candidate_decode.h"
 #include "generic_candidate_decode.h"
 
@@ -23,12 +24,33 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
     GM_ADDR priors, GM_ADDR decoded, GM_ADDR workspace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
-    if constexpr (PATH == 34) {
+    if constexpr (PATH == 15) {
         InitSocState();
-        const uint32_t candidates = uint32_t(GetBlockNum()) * 256;
+        NativeSmallCandidateDecode<DT_RAW_PRED> op;
+        op.Run(raw_pred, priors, decoded);
+    } else if constexpr (PATH == 34 || PATH == 35) {
+        InitSocState();
+        const uint32_t candidates = uint32_t(GetBlockNum()) * 256 + (PATH == 35 ? 1 : 0);
         const uint32_t begin = uint32_t(GetBlockIdx()) * 256;
-        SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1024> op;
-        op.Run(raw_pred, priors, decoded, candidates, begin, 256);
+        if constexpr (PATH == 35) {
+            if (uint32_t(GetBlockIdx()) + 1 == uint32_t(GetBlockNum())) {
+                SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1280> op;
+                op.Run(raw_pred, priors, decoded, candidates, begin, 257);
+            } else {
+                SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1024> op;
+                op.Run(raw_pred, priors, decoded, candidates, begin, 256);
+            }
+        } else {
+            SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1024> op;
+            op.Run(raw_pred, priors, decoded, candidates, begin, 256);
+        }
+    } else if constexpr (PATH >= 36 && PATH <= 39) {
+        constexpr uint32_t Tile = PATH < 38 ? 1408 : 1664;
+        const uint32_t cores = uint32_t(GetBlockNum());
+        const uint64_t bound = uint64_t(cores) * (Tile / 2);
+        const uint32_t candidates = uint32_t(uint64_t(1) << (63 - ScalarCountLeadingZero(bound)));
+        const FireCandidateDecodeFusionTilingData data{PATH % 2 == 0 ? 4u : 8u, candidates, cores, 0};
+        RunNativeLargeCandidate<DT_RAW_PRED, Tile>(raw_pred, priors, decoded, data);
     } else {
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
     if constexpr (PATH == 33) {
@@ -61,13 +83,6 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         RunNativeLargeCandidate<DT_RAW_PRED, 1664>(raw_pred, priors, decoded, data);
     } else if constexpr (PATH == 18) {
         RunNativeLargeCandidate<DT_RAW_PRED, 1408>(raw_pred, priors, decoded, data);
-    } else if constexpr (PATH == 15) {
-        InitSocState();
-        const uint32_t offset = GetBlockIdx() * 4;
-        SingleTaskSmallCandidateDecode<DT_RAW_PRED, 4, true, true> op;
-        op.Init(raw_pred + offset * 6 * sizeof(DT_RAW_PRED), priors + offset * 20,
-            decoded + offset * 5 * sizeof(DT_RAW_PRED), data);
-        op.Process();
     } else if constexpr (PATH == 14) {
         SmallCandidateDecode<DT_RAW_PRED, 4, true> op;
         op.Init(raw_pred, priors, decoded, data);

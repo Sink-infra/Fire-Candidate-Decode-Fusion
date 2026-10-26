@@ -2,7 +2,7 @@
 
 template <uint32_t Tile, uint32_t Pitch>
 __aicore__ inline void DecodeCandidateDenominators(LocalTensor<float> columns,
-    LocalTensor<float> two, LocalTensor<float> one)
+    LocalTensor<float> two, LocalTensor<float> one, LocalTensor<float> firstStride)
 {
     static_assert(Tile >= 1024 && Tile % 64 == 0 && (Pitch == Tile + 8 || Pitch == Tile + 16));
     SetMaskCount();
@@ -26,10 +26,19 @@ __aicore__ inline void DecodeCandidateDenominators(LocalTensor<float> columns,
         MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
     PipeBarrier<PIPE_V>();
     SetVectorMask<float, MaskMode::COUNTER>(Tile);
-    for (uint32_t field = 0; field < 4; ++field)
+    Mul<float, false>(columns, columns, firstStride,
+        MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
+    for (uint32_t field = 1; field < 4; ++field)
         Mul<float, false>(columns[field * Pitch], columns[field * Pitch], columns[8 * Pitch],
             MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
     PipeBarrier<PIPE_V>();
     SetMaskNorm();
     ResetMask();
+}
+
+template <uint32_t Tile, uint32_t Pitch>
+__aicore__ inline void DecodeCandidateDenominators(LocalTensor<float> columns,
+    LocalTensor<float> two, LocalTensor<float> one)
+{
+    DecodeCandidateDenominators<Tile, Pitch>(columns, two, one, columns[8 * Pitch]);
 }
