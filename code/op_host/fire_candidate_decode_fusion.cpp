@@ -109,6 +109,13 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
             PATH = 34;
         }
     }
+    if (data->batch == 4 && data->candidates >= 1025 && data->candidates % 256 == 1) {
+        const uint32_t fullTileCores = data->candidates / 256;
+        if (fullTileCores <= platform.GetCoreNumAiv()) {
+            cores = fullTileCores;
+            PATH = 35;
+        }
+    }
     data->cores = cores;
     if (PATH == 33 || PATH == 34) {
         uint32_t shift = 0;

@@ -28,12 +28,22 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         InitSocState();
         NativeSmallCandidateDecode<DT_RAW_PRED> op;
         op.Run(raw_pred, priors, decoded);
-    } else if constexpr (PATH == 34) {
+    } else if constexpr (PATH == 34 || PATH == 35) {
         InitSocState();
-        const uint32_t candidates = uint32_t(GetBlockNum()) * 256;
+        const uint32_t candidates = uint32_t(GetBlockNum()) * 256 + (PATH == 35 ? 1 : 0);
         const uint32_t begin = uint32_t(GetBlockIdx()) * 256;
-        SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1024> op;
-        op.Run(raw_pred, priors, decoded, candidates, begin, 256);
+        if constexpr (PATH == 35) {
+            if (uint32_t(GetBlockIdx()) + 1 == uint32_t(GetBlockNum())) {
+                SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1280> op;
+                op.Run(raw_pred, priors, decoded, candidates, begin, 257);
+            } else {
+                SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1024> op;
+                op.Run(raw_pred, priors, decoded, candidates, begin, 256);
+            }
+        } else {
+            SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1024> op;
+            op.Run(raw_pred, priors, decoded, candidates, begin, 256);
+        }
     } else {
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
     if constexpr (PATH == 33) {
