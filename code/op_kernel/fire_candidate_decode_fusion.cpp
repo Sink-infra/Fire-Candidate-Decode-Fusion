@@ -44,6 +44,13 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
             SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1024> op;
             op.Run(raw_pred, priors, decoded, candidates, begin, 256);
         }
+    } else if constexpr (PATH >= 36 && PATH <= 39) {
+        constexpr uint32_t Tile = PATH < 38 ? 1408 : 1664;
+        const uint32_t cores = uint32_t(GetBlockNum());
+        const uint64_t bound = uint64_t(cores) * (Tile / 2);
+        const uint32_t candidates = uint32_t(uint64_t(1) << (63 - ScalarCountLeadingZero(bound)));
+        const FireCandidateDecodeFusionTilingData data{PATH % 2 == 0 ? 4u : 8u, candidates, cores, 0};
+        RunNativeLargeCandidate<DT_RAW_PRED, Tile>(raw_pred, priors, decoded, data);
     } else {
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
     if constexpr (PATH == 33) {
