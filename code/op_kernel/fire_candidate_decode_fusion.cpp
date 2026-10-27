@@ -24,7 +24,13 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
     GM_ADDR priors, GM_ADDR decoded, GM_ADDR workspace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
-    if constexpr (PATH == 15) {
+    if constexpr (PATH == 51) {
+        const uint32_t active = uint32_t(GetBlockNum()) / 2;
+        if (uint32_t(GetBlockIdx()) >= active) return;
+        InitSocState();
+        ConfigNativeSmallCandidateDecode<DT_RAW_PRED, 8> op;
+        op.Run(raw_pred, priors, decoded);
+    } else if constexpr (PATH == 15) {
         InitSocState();
         NativeSmallCandidateDecode<DT_RAW_PRED> op;
         op.Run(raw_pred, priors, decoded);
