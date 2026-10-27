@@ -125,13 +125,18 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         PATH = (PATH == 18 ? 40 : 42) + (data->batch == 8 ? 1 : 0);
     }
     if (PATH == 26 && data->candidates % 8 == 1) PATH = 42 + data->batch;
+    if (PATH == 15 && data->batch == 1 && data->candidates % 8 == 0 &&
+        2 * (data->candidates / 8) <= platform.GetCoreNumAiv()) {
+        PATH = 51;
+        cores = data->candidates / 8;
+    }
     data->cores = cores;
     if (PATH == 33 || PATH == 34) {
         uint32_t shift = 0;
         while ((1u << shift) < cores) ++shift;
         data->segments = (1u << shift) == cores ? shift : 32;
     }
-    context->SetBlockDim(cores);
+    context->SetBlockDim(PATH == 51 ? cores * 2u : cores);
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
     ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED, PATH);
     context->GetWorkspaceSizes(1)[0] = 0;
