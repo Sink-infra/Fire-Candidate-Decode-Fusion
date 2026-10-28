@@ -36,6 +36,15 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         InitSocState();
         NativeSmallCandidateDecode<DT_RAW_PRED> op;
         op.Run(raw_pred, priors, decoded);
+    } else if constexpr (PATH == 65) {
+        InitSocState();
+        constexpr uint32_t Rows = CandidateMediumRows;
+        const uint64_t bound = uint64_t(GetBlockNum()) * Rows;
+        const uint32_t candidates = uint32_t(uint64_t(1) << (63 - ScalarCountLeadingZero(bound)));
+        const uint32_t begin = uint32_t(GetBlockIdx()) * Rows;
+        const uint32_t count = candidates - begin < Rows ? candidates - begin : Rows;
+        SingleGroupMediumCandidateDecode<DT_RAW_PRED, Rows * 4> op;
+        op.Run(raw_pred, priors, decoded, candidates, begin, count);
     } else if constexpr (PATH == 34 || PATH == 35) {
         InitSocState();
         const uint32_t candidates = uint32_t(GetBlockNum()) * 256 + (PATH == 35 ? 1 : 0);
@@ -77,6 +86,13 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         const uint32_t count = data.candidates - begin < Tile ? data.candidates - begin : Tile;
         ContiguousCandidateDecode<DT_RAW_PRED, Tile> op;
         op.Run(raw_pred, priors, decoded, data.candidates, 0, begin, count);
+    } else if constexpr (PATH == 66) {
+        InitSocState();
+        constexpr uint32_t Rows = CandidateMediumRows;
+        const uint32_t begin = uint32_t(GetBlockIdx()) * Rows;
+        const uint32_t count = data.candidates - begin < Rows ? data.candidates - begin : Rows;
+        SingleGroupMediumCandidateDecode<DT_RAW_PRED, Rows * 4> op;
+        op.Run(raw_pred, priors, decoded, data.candidates, begin, count);
     } else if constexpr (PATH == 33) {
         RunCoarseMediumCandidate<DT_RAW_PRED, sizeof(DT_RAW_PRED) == 2>(raw_pred, priors, decoded, data);
     } else if constexpr (PATH == 31 || PATH == 32) {

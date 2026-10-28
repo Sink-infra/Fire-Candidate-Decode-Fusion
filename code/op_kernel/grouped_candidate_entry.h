@@ -46,5 +46,11 @@ __aicore__ inline void RunNativeLargeCandidate(GM_ADDR raw, GM_ADDR prior, GM_AD
         RunLargeCandidatePath<T, Tile, true, true, true>(raw, prior, out, data);
         return;
     }
+    if constexpr (sizeof(T) == 4) {
+        if (data.candidates % 16 != 0) {
+            RunLargeCandidatePath<T, Tile, false, false>(raw, prior, out, data);
+            return;
+        }
+    }
     RunLargeCandidatePath<T, Tile, true, true>(raw, prior, out, data);
 }
