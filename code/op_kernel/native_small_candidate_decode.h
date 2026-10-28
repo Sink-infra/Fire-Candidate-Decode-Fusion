@@ -124,7 +124,7 @@ __aicore__ inline void ConfigTransposeCandidateInputs()
     TransDataTo5HD<float>(target, source, TransDataTo5HDParams{false, false, 1, 0, 0});
 }
 
-template <typename T, uint32_t Rows = 4>
+template <typename T, uint32_t Rows = 4, bool ScaledSigmoid = sizeof(T) == 2>
 class ConfigNativeSmallCandidateDecode {
     template <typename U>
     __aicore__ inline LocalTensor<U> At(uint32_t address, uint32_t count = 128,
@@ -157,7 +157,7 @@ public:
         SetFlag<HardEvent::S_V>(0);
         WaitFlag<HardEvent::S_V>(0);
         auto ones = At<float>(4864);
-        Duplicate(ones, 1.0f, 64);
+        Duplicate(ones, ScaledSigmoid ? 2.0f : 1.0f, 64);
         WaitFlag<HardEvent::MTE2_V>(0);
         LocalTensor<float> activation;
         if constexpr (sizeof(T) == 2) {
@@ -180,12 +180,19 @@ public:
         PipeBarrier<PIPE_V>();
         auto columns = At<float>(1024);
         auto priors = At<float>(1056);
-        Muls(columns, columns, 2.0f, uint64_t(8), uint8_t(4), {1, 1, 2, 2});
-        PipeBarrier<PIPE_V>();
+        if constexpr (ScaledSigmoid) {
+        Muls(columns[5 * Pitch], columns[5 * Pitch], 0.25f, uint64_t(8), uint8_t(1), {1, 1, 2, 2});
+        } else {
+            Muls(columns, columns, 2.0f, uint64_t(8), uint8_t(4), {1, 1, 2, 2});
+            PipeBarrier<PIPE_V>();
+        }
         Adds(columns, columns, -0.5f, uint64_t(8), uint8_t(2), {1, 1, 2, 2});
         Mul(columns[2 * Pitch], columns[2 * Pitch], columns[2 * Pitch], uint64_t(8), uint8_t(2), {1, 1, 1, 2, 2, 2});
+        if constexpr (!ScaledSigmoid)
         Mul(columns[4 * Pitch], columns[4 * Pitch], columns[5 * Pitch], uint64_t(8), uint8_t(1), {1, 1, 1, 2, 2, 2});
         PipeBarrier<PIPE_V>();
+        if constexpr (ScaledSigmoid)
+        Mul(columns[4 * Pitch], columns[4 * Pitch], columns[5 * Pitch], uint64_t(8), uint8_t(1), {1, 1, 1, 2, 2, 2});
         Add(columns, columns, priors, uint64_t(8), uint8_t(2), {1, 1, 1, 2, 2, 2});
         Mul(columns[2 * Pitch], columns[2 * Pitch], priors[3 * Pitch], uint64_t(8), uint8_t(2), {1, 1, 1, 2, 2, 2});
         PipeBarrier<PIPE_V>();

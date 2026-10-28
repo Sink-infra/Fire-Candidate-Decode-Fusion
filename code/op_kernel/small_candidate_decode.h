@@ -2,6 +2,9 @@
 
 template <typename T, uint32_t Pack, bool Unroll = false, bool FixedBase = false, bool SafeCopy = false>
 class SingleTaskSmallCandidateDecode {
+    static constexpr bool ScaledSigmoid = sizeof(T) == 2;
+    static constexpr float CoordinateScale = ScaledSigmoid ? 1.0f : 2.0f;
+    static constexpr float ScoreScale = ScaledSigmoid ? 0.25f : 1.0f;
 public:
     __aicore__ inline void Init(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
                                const FireCandidateDecodeFusionTilingData &d)
@@ -10,7 +13,7 @@ public:
         raw_.SetGlobalBuffer((__gm__ T *)raw);
         prior_.SetGlobalBuffer((__gm__ float *)prior);
         out_.SetGlobalBuffer((__gm__ T *)out);
-        Duplicate(Local<float>(5), 1.0f, ((Pack * 24 + 31) / 32) * 8);
+        Duplicate(Local<float>(5), ScaledSigmoid ? 2.0f : 1.0f, ((Pack * 24 + 31) / 32) * 8);
     }
     __aicore__ inline void Process()
     {
@@ -74,23 +77,23 @@ public:
                 } else {
             for (uint32_t row = 0; row < count; ++row) {
             const float stride = prior.GetValue(row * 5 + 2);
-            float x = 2.0f * sig.GetValue(row * 6 + 0);
+            float x = CoordinateScale * sig.GetValue(row * 6 + 0);
             x = x - 0.5f;
             x = x + prior.GetValue(row * 5 + 0);
             x = x * stride;
-            float y = 2.0f * sig.GetValue(row * 6 + 1);
+            float y = CoordinateScale * sig.GetValue(row * 6 + 1);
             y = y - 0.5f;
             y = y + prior.GetValue(row * 5 + 1);
             y = y * stride;
-            float w = 2.0f * sig.GetValue(row * 6 + 2);
+            float w = CoordinateScale * sig.GetValue(row * 6 + 2);
             w = w * w;
             w = w * prior.GetValue(row * 5 + 3);
             w = w * stride;
-            float h = 2.0f * sig.GetValue(row * 6 + 3);
+            float h = CoordinateScale * sig.GetValue(row * 6 + 3);
             h = h * h;
             h = h * prior.GetValue(row * 5 + 4);
             h = h * stride;
-            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            const float score = (sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5)) * ScoreScale;
             result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
             result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
             result.SetValue(row * 5 + 4, score);
@@ -99,23 +102,23 @@ public:
             } else {
             for (uint32_t row = 0; row < count; ++row) {
             const float stride = prior.GetValue(row * 5 + 2);
-            float x = 2.0f * sig.GetValue(row * 6 + 0);
+            float x = CoordinateScale * sig.GetValue(row * 6 + 0);
             x = x - 0.5f;
             x = x + prior.GetValue(row * 5 + 0);
             x = x * stride;
-            float y = 2.0f * sig.GetValue(row * 6 + 1);
+            float y = CoordinateScale * sig.GetValue(row * 6 + 1);
             y = y - 0.5f;
             y = y + prior.GetValue(row * 5 + 1);
             y = y * stride;
-            float w = 2.0f * sig.GetValue(row * 6 + 2);
+            float w = CoordinateScale * sig.GetValue(row * 6 + 2);
             w = w * w;
             w = w * prior.GetValue(row * 5 + 3);
             w = w * stride;
-            float h = 2.0f * sig.GetValue(row * 6 + 3);
+            float h = CoordinateScale * sig.GetValue(row * 6 + 3);
             h = h * h;
             h = h * prior.GetValue(row * 5 + 4);
             h = h * stride;
-            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            const float score = (sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5)) * ScoreScale;
             result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
             result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
             result.SetValue(row * 5 + 4, score);
@@ -158,23 +161,23 @@ private:
     {
         constexpr uint32_t row = Row;
             const float stride = prior.GetValue(row * 5 + 2);
-            float x = 2.0f * sig.GetValue(row * 6 + 0);
+            float x = CoordinateScale * sig.GetValue(row * 6 + 0);
             x = x - 0.5f;
             x = x + prior.GetValue(row * 5 + 0);
             x = x * stride;
-            float y = 2.0f * sig.GetValue(row * 6 + 1);
+            float y = CoordinateScale * sig.GetValue(row * 6 + 1);
             y = y - 0.5f;
             y = y + prior.GetValue(row * 5 + 1);
             y = y * stride;
-            float w = 2.0f * sig.GetValue(row * 6 + 2);
+            float w = CoordinateScale * sig.GetValue(row * 6 + 2);
             w = w * w;
             w = w * prior.GetValue(row * 5 + 3);
             w = w * stride;
-            float h = 2.0f * sig.GetValue(row * 6 + 3);
+            float h = CoordinateScale * sig.GetValue(row * 6 + 3);
             h = h * h;
             h = h * prior.GetValue(row * 5 + 4);
             h = h * stride;
-            const float score = sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5);
+            const float score = (sig.GetValue(row * 6 + 4) * sig.GetValue(row * 6 + 5)) * ScoreScale;
             result.SetValue(row * 5 + 0, x); result.SetValue(row * 5 + 1, y);
             result.SetValue(row * 5 + 2, w); result.SetValue(row * 5 + 3, h);
             result.SetValue(row * 5 + 4, score);
