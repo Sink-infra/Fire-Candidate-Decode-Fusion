@@ -152,9 +152,8 @@ public:
             DataCopyPadExtParams<float>{false, 0, 0, 0});
         SetFlag<HardEvent::MTE2_V>(0);
         auto index = At<uint32_t>(4608);
-        #pragma unroll
-        for (uint32_t i = 0; i < Rows * 5; ++i)
-            index.SetValue(i, (i / 5 * 8 + i % 5) * 4);
+        index.SetValue(0, uint32_t(0x1f1f1f1f));
+        index.SetValue(1, Rows == 8 ? uint32_t(0x1f1f1f1f) : uint32_t(0));
         SetFlag<HardEvent::S_V>(0);
         WaitFlag<HardEvent::S_V>(0);
         auto ones = At<float>(4864);
@@ -204,7 +203,8 @@ public:
         TransDataTo5HD<float>(targets, sources, TransDataTo5HDParams{false, false, 1, 0, 0});
         PipeBarrier<PIPE_V>();
         auto packed = At<float>(4096);
-        Gather(packed, At<float>(3072), index, 0, Rows * 5);
+        uint64_t selected;
+        GatherMask(packed, At<float>(3072), index, false, 0, {1, 1, 8, 0}, selected);
         LocalTensor<T> result;
         if constexpr (sizeof(T) == 2) {
             PipeBarrier<PIPE_V>();
