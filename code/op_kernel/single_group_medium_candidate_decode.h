@@ -111,7 +111,7 @@ public:
         DataCopyPad(outGlobal[begin * 5], output,
             DataCopyExtParams{4, outputBytes, outputGap,
                 (candidates - count) * 5 * uint32_t(sizeof(T)), 0});
-        SetFlag<HardEvent::MTE3_S>(0);
-        WaitFlag<HardEvent::MTE3_S>(0);
+        SetFlag<HardEvent::MTE3_V>(0);
+        WaitFlag<HardEvent::MTE3_V>(0);
     }
 };

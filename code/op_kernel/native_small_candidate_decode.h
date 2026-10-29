@@ -243,8 +243,8 @@ public:
         WaitFlag<HardEvent::V_MTE3>(0);
         DataCopyPad(outGlobal[begin * 5], result,
             DataCopyExtParams{1, Rows * 5 * uint32_t(sizeof(T)), 0, 0, 0});
-        SetFlag<HardEvent::MTE3_S>(0);
-        WaitFlag<HardEvent::MTE3_S>(0);
+        SetFlag<HardEvent::MTE3_V>(0);
+        WaitFlag<HardEvent::MTE3_V>(0);
         }
     }
 };
