@@ -48,7 +48,8 @@ __aicore__ inline void NativeEightCandidatePhase()
         targets[j * 2 + 1] = targets[j * 2] + Rows * 4;
     }
     TransDataTo5HD<float>(targets, sources,
-        TransDataTo5HDParams{false, false, uint8_t(Rows / 64), 1, 48});
+        TransDataTo5HDParams{false, false, uint8_t(Rows / 64),
+            uint16_t(Rows == 64 ? 0 : 1), uint16_t(Rows == 64 ? 0 : 48)});
 }
 
 template <uint32_t Tile, uint32_t Pitch, uint32_t SourceAddr, uint32_t ColumnAddr>
@@ -79,7 +80,8 @@ __aicore__ inline void NativeFiveCandidatePhase()
         targets[j * 2 + 1] = targets[j * 2] + Rows * 20;
     }
     TransDataTo5HD<float>(targets, sources,
-        TransDataTo5HDParams{false, false, uint8_t(Rows / 64), 40, 1});
+        TransDataTo5HDParams{false, false, uint8_t(Rows / 64),
+            uint16_t(Rows == 64 ? 0 : 40), uint16_t(Rows == 64 ? 0 : 1)});
 }
 
 template <uint32_t Tile, uint32_t Pitch, uint32_t ColumnAddr, uint32_t PackedAddr, bool FullStripe = false>

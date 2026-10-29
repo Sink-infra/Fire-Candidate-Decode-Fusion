@@ -14,20 +14,36 @@ using namespace AscendC;
 
 #include "paired_batch_candidate_decode.h"
 #include "candidate_fixed_small_batch.h"
-#include "grouped_medium_candidate_entry.h"
-#include "grouped_large_candidate_entry.h"
-#include "coarse_medium_candidate_entry.h"
+#include "grouped_candidate_entry.h"
 #include "single_group_medium_candidate_decode.h"
+#include "contiguous_candidate_decode.h"
 
 template <typename DT_RAW_PRED, uint32_t PATH>
 __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
     GM_ADDR priors, GM_ADDR decoded, GM_ADDR workspace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(FireCandidateDecodeFusionTilingData);
-    if constexpr (PATH == 15) {
+    if constexpr (PATH == 51 || PATH == 54) {
+        constexpr uint32_t factor = PATH == 51 ? 2 :
+            (sizeof(DT_RAW_PRED) == 4 ? CandidateSmallLaunchFloat : CandidateSmallLaunchHalf);
+        const uint32_t active = uint32_t(GetBlockNum()) / factor;
+        if (uint32_t(GetBlockIdx()) >= active) return;
+        InitSocState();
+        ConfigNativeSmallCandidateDecode<DT_RAW_PRED, 8> op;
+        op.Run(raw_pred, priors, decoded);
+    } else if constexpr (PATH == 15) {
         InitSocState();
         NativeSmallCandidateDecode<DT_RAW_PRED> op;
         op.Run(raw_pred, priors, decoded);
+    } else if constexpr (PATH == 65) {
+        InitSocState();
+        constexpr uint32_t Rows = CandidateMediumRows;
+        const uint64_t bound = uint64_t(GetBlockNum()) * Rows;
+        const uint32_t candidates = uint32_t(uint64_t(1) << (63 - ScalarCountLeadingZero(bound)));
+        const uint32_t begin = uint32_t(GetBlockIdx()) * Rows;
+        const uint32_t count = candidates - begin < Rows ? candidates - begin : Rows;
+        SingleGroupMediumCandidateDecode<DT_RAW_PRED, Rows * 4> op;
+        op.Run(raw_pred, priors, decoded, candidates, begin, count);
     } else if constexpr (PATH == 34 || PATH == 35) {
         InitSocState();
         const uint32_t candidates = uint32_t(GetBlockNum()) * 256 + (PATH == 35 ? 1 : 0);
@@ -53,9 +69,30 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         const uint32_t candidates = uint32_t(uint64_t(1) << (63 - ScalarCountLeadingZero(bound))) + (Tail ? 1u : 0u);
         const FireCandidateDecodeFusionTilingData data{Key % 2 == 0 ? 4u : 8u, candidates, cores, 0};
         RunNativeLargeCandidate<DT_RAW_PRED, Tile>(raw_pred, priors, decoded, data);
+    } else if constexpr (PATH >= 44 && PATH <= 50) {
+        InitSocState();
+        constexpr uint32_t Batch = PATH - 42;
+        const uint32_t cores = uint32_t(GetBlockNum());
+        const uint32_t candidates = (cores / Batch - 1) * 8 + 1;
+        const FireCandidateDecodeFusionTilingData data{Batch, candidates, cores, 0};
+        ProcessFixedSmallBatch<DT_RAW_PRED>(raw_pred, priors, decoded, data);
     } else {
     GET_TILING_DATA_WITH_STRUCT(FireCandidateDecodeFusionTilingData, data, tiling);
-    if constexpr (PATH == 33) {
+    if constexpr (PATH == 52 || PATH == 53) {
+        InitSocState();
+        constexpr uint32_t Tile = PATH == 52 ? 512 : 128;
+        const uint32_t begin = uint32_t(GetBlockIdx()) * Tile;
+        const uint32_t count = data.candidates - begin < Tile ? data.candidates - begin : Tile;
+        ContiguousCandidateDecode<DT_RAW_PRED, Tile> op;
+        op.Run(raw_pred, priors, decoded, data.candidates, 0, begin, count);
+    } else if constexpr (PATH == 66) {
+        InitSocState();
+        constexpr uint32_t Rows = CandidateMediumRows;
+        const uint32_t begin = uint32_t(GetBlockIdx()) * Rows;
+        const uint32_t count = data.candidates - begin < Rows ? data.candidates - begin : Rows;
+        SingleGroupMediumCandidateDecode<DT_RAW_PRED, Rows * 4> op;
+        op.Run(raw_pred, priors, decoded, data.candidates, begin, count);
+    } else if constexpr (PATH == 33) {
         RunCoarseMediumCandidate<DT_RAW_PRED, sizeof(DT_RAW_PRED) == 2>(raw_pred, priors, decoded, data);
     } else if constexpr (PATH == 31 || PATH == 32) {
         RunFourBatchMediumCandidate<DT_RAW_PRED, PATH == 32>(raw_pred, priors, decoded, data);

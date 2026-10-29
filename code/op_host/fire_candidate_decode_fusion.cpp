@@ -124,13 +124,38 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
         ((data->candidates - 1) & (data->candidates - 2)) == 0) {
         PATH = (PATH == 18 ? 40 : 42) + (data->batch == 8 ? 1 : 0);
     }
+    if (PATH == 26 && data->candidates % 8 == 1) PATH = 42 + data->batch;
+    if (PATH == 15 && data->batch == 1 && data->candidates % 8 == 0 &&
+        2 * (data->candidates / 8) <= platform.GetCoreNumAiv()) {
+        PATH = 51;
+        cores = data->candidates / 8;
+    }
+    if (data->batch == 1 && data->candidates >= 512) {
+        const uint32_t available = platform.GetCoreNumAiv();
+        const uint32_t span = (data->candidates + available - 1) / available;
+        if (span <= 512) {
+            const bool fineTail = data->candidates % 128 != 0 && span <= 128;
+            const uint32_t tile = fineTail ? 128 : 512;
+            cores = (data->candidates + tile - 1) / tile;
+            PATH = fineTail ? 53 : 52;
+        }
+    }
+    if (data->batch == 4 && data->candidates > platform.GetCoreNumAiv() * 256 && data->candidates % 256 == 0) {
+        const uint32_t tileCores = (data->candidates + CandidateMediumRows - 1) / CandidateMediumRows;
+        if (tileCores <= platform.GetCoreNumAiv()) {
+            const bool powerTwo = (data->candidates & (data->candidates - 1)) == 0;
+            PATH = powerTwo ? 65 : 66; cores = tileCores;
+        }
+    }
+    const uint32_t smallLaunch = dtype == ge::DT_FLOAT ? CandidateSmallLaunchFloat : CandidateSmallLaunchHalf;
+    if (PATH == 51 && smallLaunch != 2 && cores * smallLaunch <= platform.GetCoreNumAiv()) PATH = 54;
     data->cores = cores;
     if (PATH == 33 || PATH == 34) {
         uint32_t shift = 0;
         while ((1u << shift) < cores) ++shift;
         data->segments = (1u << shift) == cores ? shift : 32;
     }
-    context->SetBlockDim(cores);
+    context->SetBlockDim(PATH == 54 ? cores * smallLaunch : (PATH == 51 ? cores * 2u : cores));
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
     ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED, PATH);
     context->GetWorkspaceSizes(1)[0] = 0;
