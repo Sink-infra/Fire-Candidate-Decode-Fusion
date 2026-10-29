@@ -24,6 +24,6 @@ __aicore__ inline void StoreNativeHalfSmallCandidates(GlobalTensor<half> output,
     WaitFlag<HardEvent::V_MTE3>(0);
     DataCopyPad(output[begin * 5], packed,
         DataCopyExtParams{1, Rows * 10, 0, 0, 0});
-    SetFlag<HardEvent::MTE3_S>(0);
-    WaitFlag<HardEvent::MTE3_S>(0);
+    SetFlag<HardEvent::MTE3_V>(0);
+    WaitFlag<HardEvent::MTE3_V>(0);
 }
