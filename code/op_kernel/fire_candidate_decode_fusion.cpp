@@ -15,7 +15,6 @@ using namespace AscendC;
 #include "paired_batch_candidate_decode.h"
 #include "candidate_fixed_small_batch.h"
 #include "grouped_candidate_entry.h"
-#include "coarse_medium_candidate_entry.h"
 #include "single_group_medium_candidate_decode.h"
 #include "contiguous_candidate_decode.h"
 

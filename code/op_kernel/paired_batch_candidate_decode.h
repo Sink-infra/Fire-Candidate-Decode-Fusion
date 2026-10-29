@@ -7,7 +7,7 @@
 #include "candidate_native_half_input.h"
 #include "candidate_transfer.h"
 
-template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false, bool Preload = false, bool NativePrior = false, bool FuseConfidence = false, bool HalfNativeInput = false, bool AlignedTransfers = false, bool SkewStride = false>
+template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false, bool Preload = false, bool NativePrior = false, bool FuseConfidence = false, bool HalfNativeInput = false, bool AlignedTransfers = false, bool SkewStride = false, bool ReplicatedStride = false>
 class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / BatchGroup;
     static constexpr uint32_t Pitch = Tile + (HalfNativeInput ? 16 : 8);
@@ -18,6 +18,8 @@ class PairedBatchCandidateDecode {
     static constexpr uint32_t SharedBytes = Tile * 5 * sizeof(T);
     static constexpr uint32_t ColumnAddr = SharedAddr + SharedBytes;
     static constexpr uint32_t OneAddr = ColumnAddr + Pitch * 44;
+    static constexpr uint32_t StrideAddr = OneAddr + (sizeof(T) == 4 ? 928 : 576);
+    static_assert(!ReplicatedStride || (NativePrior && NativePack && StrideAddr + Pitch * 16 <= 196608));
     static constexpr uint32_t RawIdxAddr = OneAddr + (FuseConfidence ? 512 : 256);
     static constexpr uint32_t RawIndexRows = NativeSix && Tile < 640 ? 640 : Tile;
     static constexpr uint32_t PriorIdxAddr = RawIdxAddr + RawIndexRows * 4;
@@ -187,7 +189,11 @@ public:
                     DataCopy(c[(j + 6) * Pitch + q * HalfTile], c[(j + 6) * Pitch], HalfTile);
             }
             PipeBarrier<PIPE_V>();
-            if constexpr (SkewStride) {
+            if constexpr (ReplicatedStride) {
+                #pragma unroll
+                for (uint32_t field = 0; field < 4; ++field)
+                    DataCopy(At<float>(StrideAddr + field * Pitch * 4, Tile), c[8 * Pitch], Tile);
+            } else if constexpr (SkewStride) {
                 DataCopy(At<float>(OneAddr + 544, Tile), c[8 * Pitch], Tile);
                 PipeBarrier<PIPE_V>();
             }
@@ -322,7 +328,11 @@ private:
             PipeBarrier<PIPE_V>();
             if constexpr (Reuse) ReleaseRawAndPrefetch(b, start, validCount);
             if constexpr (FuseConfidence) {
-                if constexpr (SkewStride)
+                if constexpr (ReplicatedStride)
+                    DecodeCandidateDenominators<Tile, Pitch, false, true>(c,
+                        At<float>(OneAddr, 64), At<float>(OneAddr + 256, 64),
+                        At<float>(StrideAddr, Pitch * 4));
+                else if constexpr (SkewStride)
                     DecodeCandidateDenominators<Tile, Pitch>(c,
                         At<float>(OneAddr, 64), At<float>(OneAddr + 256, 64),
                         At<float>(OneAddr + 544, Tile));

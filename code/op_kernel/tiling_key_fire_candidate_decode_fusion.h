@@ -3,7 +3,7 @@
 static constexpr unsigned int CandidateMediumRows = 448;
 
 static constexpr unsigned int CandidateSmallLaunchFloat = 4;
-static constexpr unsigned int CandidateSmallLaunchHalf = 2;
+static constexpr unsigned int CandidateSmallLaunchHalf = 1;
 #include "ascendc/host_api/tiling/template_argument.h"
 ASCENDC_TPL_ARGS_DECL(FireCandidateDecodeFusion,
     ASCENDC_TPL_DATATYPE_DECL(DT_RAW_PRED, C_DT_FLOAT, C_DT_FLOAT16),
