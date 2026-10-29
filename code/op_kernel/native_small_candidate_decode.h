@@ -1,4 +1,5 @@
 #pragma once
+#include "candidate_native_half_output.h"
 
 template <uint32_t Source, uint32_t RowBytes, uint32_t Target>
 __aicore__ inline void TransposeFourCandidateRows()
@@ -147,15 +148,19 @@ public:
         DataCopyPad(raw, rawGlobal[begin * 6],
             DataCopyExtParams{Rows, 6 * uint32_t(sizeof(T)), 0, 0, 0},
             DataCopyPadExtParams<T>{false, 0, 0, 0});
+        if constexpr (sizeof(T) == 2) SetFlag<HardEvent::MTE2_V>(0);
         DataCopyPad(prior, priorGlobal[begin * 5],
             DataCopyExtParams{Rows, 20, 0, 0, 0},
             DataCopyPadExtParams<float>{false, 0, 0, 0});
-        SetFlag<HardEvent::MTE2_V>(0);
+        if constexpr (sizeof(T) == 2) SetFlag<HardEvent::MTE2_V>(1);
+        else SetFlag<HardEvent::MTE2_V>(0);
         auto index = At<uint32_t>(4608);
+        if constexpr (sizeof(T) == 4) {
         index.SetValue(0, uint32_t(0x1f1f1f1f));
         index.SetValue(1, Rows == 8 ? uint32_t(0x1f1f1f1f) : uint32_t(0));
         SetFlag<HardEvent::S_V>(0);
         WaitFlag<HardEvent::S_V>(0);
+        }
         auto ones = At<float>(4864);
         Duplicate(ones, ScaledSigmoid ? 2.0f : 1.0f, 64);
         WaitFlag<HardEvent::MTE2_V>(0);
@@ -175,30 +180,46 @@ public:
         PipeBarrier<PIPE_V>();
         Div(activation, ones, activation, activationCount, activationRepeat, {1, 1, 1, 8, 0, 8});
         PipeBarrier<PIPE_V>();
+        if constexpr (sizeof(T) == 2) WaitFlag<HardEvent::MTE2_V>(1);
         if constexpr (sizeof(T) == 2) ConfigTransposeCandidateInputs<Rows, 512, 64>();
         else ConfigTransposeCandidateInputs<Rows, 0, 32>();
         PipeBarrier<PIPE_V>();
         auto columns = At<float>(1024);
         auto priors = At<float>(1056);
+        constexpr bool IsSetMask = sizeof(T) == 4;
+        constexpr uint64_t GeometryMask = IsSetMask ? 8 : MASK_PLACEHOLDER;
+        if constexpr (!IsSetMask) {
+            SetMaskNorm();
+            SetVectorMask<float, MaskMode::NORMAL>(8);
+        }
         if constexpr (ScaledSigmoid) {
-        Muls(columns[5 * Pitch], columns[5 * Pitch], 0.25f, uint64_t(8), uint8_t(1), {1, 1, 2, 2});
+        Muls<float, IsSetMask>(columns[5 * Pitch], columns[5 * Pitch], 0.25f, GeometryMask, uint8_t(1), {1, 1, 2, 2});
         } else {
-            Muls(columns, columns, 2.0f, uint64_t(8), uint8_t(4), {1, 1, 2, 2});
+            Muls<float, IsSetMask>(columns, columns, 2.0f, GeometryMask, uint8_t(4), {1, 1, 2, 2});
             PipeBarrier<PIPE_V>();
         }
-        Adds(columns, columns, -0.5f, uint64_t(8), uint8_t(2), {1, 1, 2, 2});
-        Mul(columns[2 * Pitch], columns[2 * Pitch], columns[2 * Pitch], uint64_t(8), uint8_t(2), {1, 1, 1, 2, 2, 2});
+        Adds<float, IsSetMask>(columns, columns, -0.5f, GeometryMask, uint8_t(2), {1, 1, 2, 2});
+        Mul<float, IsSetMask>(columns[2 * Pitch], columns[2 * Pitch], columns[2 * Pitch], GeometryMask, uint8_t(2), {1, 1, 1, 2, 2, 2});
         if constexpr (!ScaledSigmoid)
-        Mul(columns[4 * Pitch], columns[4 * Pitch], columns[5 * Pitch], uint64_t(8), uint8_t(1), {1, 1, 1, 2, 2, 2});
+        Mul<float, IsSetMask>(columns[4 * Pitch], columns[4 * Pitch], columns[5 * Pitch], GeometryMask, uint8_t(1), {1, 1, 1, 2, 2, 2});
         PipeBarrier<PIPE_V>();
         if constexpr (ScaledSigmoid)
-        Mul(columns[4 * Pitch], columns[4 * Pitch], columns[5 * Pitch], uint64_t(8), uint8_t(1), {1, 1, 1, 2, 2, 2});
-        Add(columns, columns, priors, uint64_t(8), uint8_t(2), {1, 1, 1, 2, 2, 2});
-        Mul(columns[2 * Pitch], columns[2 * Pitch], priors[3 * Pitch], uint64_t(8), uint8_t(2), {1, 1, 1, 2, 2, 2});
+        Mul<float, IsSetMask>(columns[4 * Pitch], columns[4 * Pitch], columns[5 * Pitch], GeometryMask, uint8_t(1), {1, 1, 1, 2, 2, 2});
+        Add<float, IsSetMask>(columns, columns, priors, GeometryMask, uint8_t(2), {1, 1, 1, 2, 2, 2});
+        Mul<float, IsSetMask>(columns[2 * Pitch], columns[2 * Pitch], priors[3 * Pitch], GeometryMask, uint8_t(2), {1, 1, 1, 2, 2, 2});
         PipeBarrier<PIPE_V>();
-        for (uint32_t j = 0; j < 4; ++j)
-            Mul(columns[j * Pitch], columns[j * Pitch], priors[2 * Pitch], uint64_t(8), uint8_t(1), {1, 1, 1, 2, 2, 2});
+        if constexpr (sizeof(T) == 2) {
+            Mul<float, IsSetMask>(columns, columns, priors[2 * Pitch], GeometryMask,
+                uint8_t(4), {1, 1, 1, 2, 2, 0});
+        } else {
+            for (uint32_t j = 0; j < 4; ++j)
+                Mul<float, IsSetMask>(columns[j * Pitch], columns[j * Pitch], priors[2 * Pitch], GeometryMask, uint8_t(1), {1, 1, 1, 2, 2, 2});
+        }
         PipeBarrier<PIPE_V>();
+        if constexpr (!IsSetMask) ResetMask();
+        if constexpr (sizeof(T) == 2) {
+            StoreNativeHalfSmallCandidates<Rows>(outGlobal, columns, begin);
+        } else {
         uint64_t sources[16], targets[16];
         #pragma unroll
         for (uint32_t j = 0; j < 8; ++j) {
@@ -224,5 +245,6 @@ public:
             DataCopyExtParams{1, Rows * 5 * uint32_t(sizeof(T)), 0, 0, 0});
         SetFlag<HardEvent::MTE3_S>(0);
         WaitFlag<HardEvent::MTE3_S>(0);
+        }
     }
 };

@@ -140,7 +140,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
             PATH = fineTail ? 53 : 52;
         }
     }
-    if (data->batch == 4 && data->candidates >= 1024 && data->candidates % 256 == 0) {
+    if (data->batch == 4 && data->candidates > platform.GetCoreNumAiv() * 256 && data->candidates % 256 == 0) {
         const uint32_t tileCores = (data->candidates + CandidateMediumRows - 1) / CandidateMediumRows;
         if (tileCores <= platform.GetCoreNumAiv()) {
             const bool powerTwo = (data->candidates & (data->candidates - 1)) == 0;
