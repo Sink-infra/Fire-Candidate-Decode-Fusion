@@ -125,7 +125,7 @@ __aicore__ inline void ConfigTransposeCandidateInputs()
     TransDataTo5HD<float>(target, source, TransDataTo5HDParams{false, false, 1, 0, 0});
 }
 
-template <typename T, uint32_t Rows = 4, bool ScaledSigmoid = sizeof(T) == 2>
+template <typename T, uint32_t Rows = 4, bool ScaledSigmoid = true>
 class ConfigNativeSmallCandidateDecode {
     template <typename U>
     __aicore__ inline LocalTensor<U> At(uint32_t address, uint32_t count = 128,
@@ -136,30 +136,31 @@ class ConfigNativeSmallCandidateDecode {
 public:
     __aicore__ inline void Run(GM_ADDR rawAddress, GM_ADDR priorAddress, GM_ADDR outAddress)
     {
+        RunRange(rawAddress, priorAddress, outAddress, uint32_t(GetBlockIdx()) * Rows, Rows);
+    }
+
+    __aicore__ inline void RunRange(GM_ADDR rawAddress, GM_ADDR priorAddress, GM_ADDR outAddress,
+        uint32_t begin, uint32_t count)
+    {
         constexpr uint32_t Pitch = 16;
         GlobalTensor<T> rawGlobal, outGlobal;
         GlobalTensor<float> priorGlobal;
         rawGlobal.SetGlobalBuffer((__gm__ T *)rawAddress);
         priorGlobal.SetGlobalBuffer((__gm__ float *)priorAddress);
         outGlobal.SetGlobalBuffer((__gm__ T *)outAddress);
-        const uint32_t begin = uint32_t(GetBlockIdx()) * Rows;
         auto raw = At<T>(0, 128, TPosition::VECIN);
         auto prior = At<float>(256, 128, TPosition::VECIN);
         DataCopyPad(raw, rawGlobal[begin * 6],
-            DataCopyExtParams{Rows, 6 * uint32_t(sizeof(T)), 0, 0, 0},
+            DataCopyExtParams{uint16_t(count), 6 * uint32_t(sizeof(T)), 0, 0, 0},
             DataCopyPadExtParams<T>{false, 0, 0, 0});
-        if constexpr (sizeof(T) == 2) SetFlag<HardEvent::MTE2_V>(0);
+        SetFlag<HardEvent::MTE2_V>(0);
         DataCopyPad(prior, priorGlobal[begin * 5],
-            DataCopyExtParams{Rows, 20, 0, 0, 0},
+            DataCopyExtParams{uint16_t(count), 20, 0, 0, 0},
             DataCopyPadExtParams<float>{false, 0, 0, 0});
-        if constexpr (sizeof(T) == 2) SetFlag<HardEvent::MTE2_V>(1);
-        else SetFlag<HardEvent::MTE2_V>(0);
+        SetFlag<HardEvent::MTE2_V>(1);
         auto index = At<uint32_t>(4608);
-        if constexpr (sizeof(T) == 4) {
-        index.SetValue(0, uint32_t(0x1f1f1f1f));
-        index.SetValue(1, Rows == 8 ? uint32_t(0x1f1f1f1f) : uint32_t(0));
-        SetFlag<HardEvent::S_V>(0);
-        WaitFlag<HardEvent::S_V>(0);
+        if constexpr (sizeof(T) == 4 && Rows == 8) {
+        Duplicate(index, uint32_t(0x1f1f1f1f), 2);
         }
         auto ones = At<float>(4864);
         Duplicate(ones, ScaledSigmoid ? 2.0f : 1.0f, 64);
@@ -168,22 +169,16 @@ public:
         if constexpr (sizeof(T) == 2) {
             activation = At<float>(512);
             Cast(activation, raw, RoundMode::CAST_NONE, Rows * 16);
-            PipeBarrier<PIPE_V>();
         } else activation = raw;
         constexpr uint64_t activationCount = Rows == 8 ? 64 : (sizeof(T) == 2 ? 64 : 32);
         constexpr uint8_t activationRepeat = Rows == 8 && sizeof(T) == 2 ? 2 : 1;
         Muls(activation, activation, -1.0f, activationCount, activationRepeat, {1, 1, 8, 8});
-        PipeBarrier<PIPE_V>();
         Exp(activation, activation, activationCount, activationRepeat, {1, 1, 8, 8});
-        PipeBarrier<PIPE_V>();
         Adds(activation, activation, 1.0f, activationCount, activationRepeat, {1, 1, 8, 8});
-        PipeBarrier<PIPE_V>();
         Div(activation, ones, activation, activationCount, activationRepeat, {1, 1, 1, 8, 0, 8});
-        PipeBarrier<PIPE_V>();
-        if constexpr (sizeof(T) == 2) WaitFlag<HardEvent::MTE2_V>(1);
+        WaitFlag<HardEvent::MTE2_V>(1);
         if constexpr (sizeof(T) == 2) ConfigTransposeCandidateInputs<Rows, 512, 64>();
         else ConfigTransposeCandidateInputs<Rows, 0, 32>();
-        PipeBarrier<PIPE_V>();
         auto columns = At<float>(1024);
         auto priors = At<float>(1056);
         constexpr bool IsSetMask = sizeof(T) == 4;
@@ -196,29 +191,25 @@ public:
         Muls<float, IsSetMask>(columns[5 * Pitch], columns[5 * Pitch], 0.25f, GeometryMask, uint8_t(1), {1, 1, 2, 2});
         } else {
             Muls<float, IsSetMask>(columns, columns, 2.0f, GeometryMask, uint8_t(4), {1, 1, 2, 2});
-            PipeBarrier<PIPE_V>();
-        }
+            }
         Adds<float, IsSetMask>(columns, columns, -0.5f, GeometryMask, uint8_t(2), {1, 1, 2, 2});
         Mul<float, IsSetMask>(columns[2 * Pitch], columns[2 * Pitch], columns[2 * Pitch], GeometryMask, uint8_t(2), {1, 1, 1, 2, 2, 2});
         if constexpr (!ScaledSigmoid)
         Mul<float, IsSetMask>(columns[4 * Pitch], columns[4 * Pitch], columns[5 * Pitch], GeometryMask, uint8_t(1), {1, 1, 1, 2, 2, 2});
-        PipeBarrier<PIPE_V>();
         if constexpr (ScaledSigmoid)
         Mul<float, IsSetMask>(columns[4 * Pitch], columns[4 * Pitch], columns[5 * Pitch], GeometryMask, uint8_t(1), {1, 1, 1, 2, 2, 2});
         Add<float, IsSetMask>(columns, columns, priors, GeometryMask, uint8_t(2), {1, 1, 1, 2, 2, 2});
         Mul<float, IsSetMask>(columns[2 * Pitch], columns[2 * Pitch], priors[3 * Pitch], GeometryMask, uint8_t(2), {1, 1, 1, 2, 2, 2});
-        PipeBarrier<PIPE_V>();
-        if constexpr (sizeof(T) == 2) {
+        if constexpr (ScaledSigmoid) {
             Mul<float, IsSetMask>(columns, columns, priors[2 * Pitch], GeometryMask,
                 uint8_t(4), {1, 1, 1, 2, 2, 0});
         } else {
             for (uint32_t j = 0; j < 4; ++j)
                 Mul<float, IsSetMask>(columns[j * Pitch], columns[j * Pitch], priors[2 * Pitch], GeometryMask, uint8_t(1), {1, 1, 1, 2, 2, 2});
         }
-        PipeBarrier<PIPE_V>();
         if constexpr (!IsSetMask) ResetMask();
         if constexpr (sizeof(T) == 2) {
-            StoreNativeHalfSmallCandidates<Rows>(outGlobal, columns, begin);
+            StoreNativeHalfSmallCandidates<Rows>(outGlobal, columns, begin, count);
         } else {
         uint64_t sources[16], targets[16];
         #pragma unroll
@@ -229,22 +220,18 @@ public:
             targets[j * 2 + 1] = 3072 + (j + 8) * 32;
         }
         TransDataTo5HD<float>(targets, sources, TransDataTo5HDParams{false, false, 1, 0, 0});
-        PipeBarrier<PIPE_V>();
         auto packed = At<float>(4096);
         uint64_t selected;
         GatherMask(packed, At<float>(3072), index, false, 0, {1, 1, 8, 0}, selected);
         LocalTensor<T> result;
         if constexpr (sizeof(T) == 2) {
-            PipeBarrier<PIPE_V>();
-            result = At<T>(4352, 64, TPosition::VECOUT);
+                result = At<T>(4352, 64, TPosition::VECOUT);
             Cast(result, packed, RoundMode::CAST_RINT, Rows * 5);
         } else result = packed;
         SetFlag<HardEvent::V_MTE3>(0);
         WaitFlag<HardEvent::V_MTE3>(0);
         DataCopyPad(outGlobal[begin * 5], result,
-            DataCopyExtParams{1, Rows * 5 * uint32_t(sizeof(T)), 0, 0, 0});
-        SetFlag<HardEvent::MTE3_V>(0);
-        WaitFlag<HardEvent::MTE3_V>(0);
+            DataCopyExtParams{1, count * 5 * uint32_t(sizeof(T)), 0, 0, 0});
         }
     }
 };

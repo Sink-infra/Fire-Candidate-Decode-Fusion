@@ -61,7 +61,7 @@ public:
         Muls(row, row, int32_t(4 - 20 * Pitch), Tile * 5);
         PipeBarrier<PIPE_V>();
         Add(index, seq, row, Tile * 5);
-        Duplicate(ones_.Get<float>(), 1.0f, 64);
+        Duplicate(ones_.Get<float>(), 2.0f, 64);
         PipeBarrier<PIPE_V>();
     }
 
@@ -121,8 +121,7 @@ private:
                 Gather(c[(j + 6) * Pitch], prior, pi, j * 4, uint64_t(64), uint8_t((count + 63) / 64), 8);
             }
             PipeBarrier<PIPE_V>();
-            Muls(c, c, 2.0f, Pitch * 4);
-            PipeBarrier<PIPE_V>();
+            Muls(c[5 * Pitch], c[5 * Pitch], 0.25f, count);
             Adds(c, c, -0.5f, Pitch * 2);
             Mul(c[2 * Pitch], c[2 * Pitch], c[2 * Pitch], Pitch * 2);
             Mul(c[4 * Pitch], c[4 * Pitch], c[5 * Pitch], count);

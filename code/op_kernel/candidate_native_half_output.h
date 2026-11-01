@@ -2,7 +2,7 @@
 
 template <uint32_t Rows>
 __aicore__ inline void StoreNativeHalfSmallCandidates(GlobalTensor<half> output,
-    LocalTensor<float> columns, uint32_t begin)
+    LocalTensor<float> columns, uint32_t begin, uint32_t count = Rows)
 {
     LocalTensor<half> casted(TPosition::VECCALC, 4352, 256);
     LocalTensor<half> transposed(TPosition::VECOUT, 5120, 256);
@@ -23,7 +23,5 @@ __aicore__ inline void StoreNativeHalfSmallCandidates(GlobalTensor<half> output,
     SetFlag<HardEvent::V_MTE3>(0);
     WaitFlag<HardEvent::V_MTE3>(0);
     DataCopyPad(output[begin * 5], packed,
-        DataCopyExtParams{1, Rows * 10, 0, 0, 0});
-    SetFlag<HardEvent::MTE3_V>(0);
-    WaitFlag<HardEvent::MTE3_V>(0);
+        DataCopyExtParams{1, count * 10, 0, 0, 0});
 }
