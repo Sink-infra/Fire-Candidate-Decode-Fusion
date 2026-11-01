@@ -28,7 +28,6 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
             (sizeof(DT_RAW_PRED) == 4 ? CandidateSmallLaunchFloat : CandidateSmallLaunchHalf);
         const uint32_t active = uint32_t(GetBlockNum()) / factor;
         if (uint32_t(GetBlockIdx()) >= active) return;
-        InitSocState();
         ConfigNativeSmallCandidateDecode<DT_RAW_PRED, 8> op;
         op.Run(raw_pred, priors, decoded);
     } else if constexpr (PATH == 15) {
