@@ -153,12 +153,11 @@ public:
         DataCopyPad(raw, rawGlobal[begin * 6],
             DataCopyExtParams{uint16_t(count), 6 * uint32_t(sizeof(T)), 0, 0, 0},
             DataCopyPadExtParams<T>{false, 0, 0, 0});
-        if constexpr (sizeof(T) == 2) SetFlag<HardEvent::MTE2_V>(0);
+        SetFlag<HardEvent::MTE2_V>(0);
         DataCopyPad(prior, priorGlobal[begin * 5],
             DataCopyExtParams{uint16_t(count), 20, 0, 0, 0},
             DataCopyPadExtParams<float>{false, 0, 0, 0});
-        if constexpr (sizeof(T) == 2) SetFlag<HardEvent::MTE2_V>(1);
-        else SetFlag<HardEvent::MTE2_V>(0);
+        SetFlag<HardEvent::MTE2_V>(1);
         auto index = At<uint32_t>(4608);
         if constexpr (sizeof(T) == 4 && Rows == 8) {
         Duplicate(index, uint32_t(0x1f1f1f1f), 2);
@@ -177,7 +176,7 @@ public:
         Exp(activation, activation, activationCount, activationRepeat, {1, 1, 8, 8});
         Adds(activation, activation, 1.0f, activationCount, activationRepeat, {1, 1, 8, 8});
         Div(activation, ones, activation, activationCount, activationRepeat, {1, 1, 1, 8, 0, 8});
-        if constexpr (sizeof(T) == 2) WaitFlag<HardEvent::MTE2_V>(1);
+        WaitFlag<HardEvent::MTE2_V>(1);
         if constexpr (sizeof(T) == 2) ConfigTransposeCandidateInputs<Rows, 512, 64>();
         else ConfigTransposeCandidateInputs<Rows, 0, 32>();
         auto columns = At<float>(1024);
