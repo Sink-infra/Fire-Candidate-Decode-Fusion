@@ -125,7 +125,7 @@ __aicore__ inline void ConfigTransposeCandidateInputs()
     TransDataTo5HD<float>(target, source, TransDataTo5HDParams{false, false, 1, 0, 0});
 }
 
-template <typename T, uint32_t Rows = 4, bool ScaledSigmoid = sizeof(T) == 2>
+template <typename T, uint32_t Rows = 4, bool ScaledSigmoid = true>
 class ConfigNativeSmallCandidateDecode {
     template <typename U>
     __aicore__ inline LocalTensor<U> At(uint32_t address, uint32_t count = 128,
@@ -208,7 +208,7 @@ public:
         Add<float, IsSetMask>(columns, columns, priors, GeometryMask, uint8_t(2), {1, 1, 1, 2, 2, 2});
         Mul<float, IsSetMask>(columns[2 * Pitch], columns[2 * Pitch], priors[3 * Pitch], GeometryMask, uint8_t(2), {1, 1, 1, 2, 2, 2});
         PipeBarrier<PIPE_V>();
-        if constexpr (sizeof(T) == 2) {
+        if constexpr (ScaledSigmoid) {
             Mul<float, IsSetMask>(columns, columns, priors[2 * Pitch], GeometryMask,
                 uint8_t(4), {1, 1, 1, 2, 2, 0});
         } else {
