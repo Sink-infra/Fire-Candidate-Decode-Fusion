@@ -16,6 +16,7 @@ using namespace AscendC;
 #include "candidate_fixed_small_batch.h"
 #include "grouped_candidate_entry.h"
 #include "single_group_medium_candidate_decode.h"
+#include "historical_medium_candidate_decode.h"
 #include "contiguous_candidate_decode.h"
 #include "paired_small_batch_candidate_decode.h"
 
@@ -29,8 +30,14 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
             (sizeof(DT_RAW_PRED) == 4 ? CandidateSmallLaunchFloat : CandidateSmallLaunchHalf);
         const uint32_t active = uint32_t(GetBlockNum()) / factor;
         if (uint32_t(GetBlockIdx()) >= active) return;
+        if constexpr (PATH == 54 && sizeof(DT_RAW_PRED) == 4) {
+            InitSocState();
+            WideSingleSmallCandidateDecode<DT_RAW_PRED> op;
+            op.Run(raw_pred, priors, decoded, uint32_t(GetBlockIdx()) * 16);
+        } else {
         ConfigNativeSmallCandidateDecode<DT_RAW_PRED, 8> op;
         op.Run(raw_pred, priors, decoded);
+        }
     } else if constexpr (PATH == 15) {
         InitSocState();
         NativeSmallCandidateDecode<DT_RAW_PRED> op;
@@ -50,10 +57,10 @@ __global__ __aicore__ void fire_candidate_decode_fusion(GM_ADDR raw_pred,
         const uint32_t begin = uint32_t(GetBlockIdx()) * 256;
         if constexpr (PATH == 35) {
             if (uint32_t(GetBlockIdx()) + 1 == uint32_t(GetBlockNum())) {
-                SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1280> op;
+                HistoricalNative::SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1280> op;
                 op.Run(raw_pred, priors, decoded, candidates, begin, 257);
             } else {
-                SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1024> op;
+                HistoricalNative::SingleGroupMediumCandidateDecode<DT_RAW_PRED, 1024> op;
                 op.Run(raw_pred, priors, decoded, candidates, begin, 256);
             }
         } else {
