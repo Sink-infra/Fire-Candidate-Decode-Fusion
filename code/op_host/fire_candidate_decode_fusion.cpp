@@ -147,17 +147,13 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
             PATH = powerTwo ? 65 : 66; cores = tileCores;
         }
     }
-    if (PATH == 51 && dtype == ge::DT_FLOAT && data->candidates % 16 == 0) {
-        PATH = 54;
-        cores = data->candidates / 16;
-    }
     data->cores = cores;
     if (PATH == 33 || PATH == 34) {
         uint32_t shift = 0;
         while ((1u << shift) < cores) ++shift;
         data->segments = (1u << shift) == cores ? shift : 32;
     }
-    context->SetBlockDim(PATH == 51 || PATH == 54 ? cores * 2u : cores);
+    context->SetBlockDim(PATH == 51 ? cores * 2u : cores);
     uint32_t DT_RAW_PRED = static_cast<uint32_t>(dtype);
     ASCENDC_TPL_SEL_PARAM(context, DT_RAW_PRED, PATH);
     context->GetWorkspaceSizes(1)[0] = 0;
