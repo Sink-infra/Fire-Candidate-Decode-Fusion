@@ -5,8 +5,6 @@
 #include "candidate_denominator_geometry.h"
 #include "candidate_native_half_input.h"
 #include "candidate_transfer.h"
-#include "candidate_native_address_cache.h"
-#include "candidate_prior_geometry.h"
 
 template <typename T, uint32_t Tile, bool CounterPrior = false, bool FastRamp = false, bool RowScratch = true, bool DoublingIndex = false, bool PatternIndex = false, bool StaticEvents = false, uint32_t BatchGroup = 2, bool NativeSix = false, bool NativePack = false, bool Preload = false, bool NativePrior = false, bool FuseConfidence = false, bool HalfNativeInput = false, bool AlignedTransfers = false, bool SkewStride = false, bool ReplicatedStride = false>
 class PairedBatchCandidateDecode {
