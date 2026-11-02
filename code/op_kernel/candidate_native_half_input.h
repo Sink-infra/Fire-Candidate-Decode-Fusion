@@ -32,14 +32,10 @@ __aicore__ inline void ActivateNativeHalfColumns(LocalTensor<float> values,
     SetMaskCount();
     SetVectorMask<float, MaskMode::COUNTER>(Elements);
     Muls<float, false>(values, values, -1.0f, MASK_PLACEHOLDER, 1, {1, 1, 8, 8});
-    PipeBarrier<PIPE_V>();
     Exp<float, false>(values, values, MASK_PLACEHOLDER, 1, {1, 1, 8, 8});
-    PipeBarrier<PIPE_V>();
     Adds<float, false>(values, values, 1.0f, MASK_PLACEHOLDER, 1, {1, 1, 8, 8});
-    PipeBarrier<PIPE_V>();
     if constexpr (!DenominatorsOnly) {
         Div<float, false>(values, numerator, values, MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 0, 8});
-        PipeBarrier<PIPE_V>();
     }
     SetMaskNorm();
     ResetMask();
