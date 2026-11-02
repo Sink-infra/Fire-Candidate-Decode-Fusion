@@ -1,7 +1,7 @@
 #pragma once
 
 template <uint32_t Tile, uint32_t Pitch, uint32_t PriorAddr,
-    uint32_t ColumnAddr, uint32_t Phase, uint32_t BatchGroup = 4, bool FullStripe = false>
+    uint32_t ColumnAddr, uint32_t Phase, uint32_t BatchGroup = 4, bool FullStripe = false, bool SpreadFields = false>
 __aicore__ inline void NativePriorCandidatePhase()
 {
     constexpr uint32_t BatchRows = Tile / BatchGroup;
@@ -14,7 +14,8 @@ __aicore__ inline void NativePriorCandidatePhase()
         const uint32_t subrow = (Phase * 8 + j) / 5;
         sources[j] = PriorAddr + j * 160 + Phase * 32;
         sources[j + 8] = sources[j];
-        targets[j * 2] = ColumnAddr + ((field + 6) * Pitch +
+        const uint32_t column = SpreadFields ? (field < 2 ? field + 8 : (field == 2 ? 13 : field + 7)) : field + 6;
+        targets[j * 2] = ColumnAddr + (column * Pitch +
             subrow * Quarter * (FullStripe ? BatchGroup : BatchGroup / 2)) * 4;
         targets[j * 2 + 1] = targets[j * 2] + ((FullStripe || BatchGroup == 4) ? Quarter : BatchRows) * 4;
     }
@@ -23,12 +24,12 @@ __aicore__ inline void NativePriorCandidatePhase()
 }
 
 template <uint32_t Tile, uint32_t Pitch, uint32_t PriorAddr, uint32_t ColumnAddr,
-    uint32_t BatchGroup = 4, bool FullStripe = false>
+    uint32_t BatchGroup = 4, bool FullStripe = false, bool SpreadFields = false>
 __aicore__ inline void GatherNativePriorCandidates()
 {
-    NativePriorCandidatePhase<Tile, Pitch, PriorAddr, ColumnAddr, 0, BatchGroup, FullStripe>();
-    NativePriorCandidatePhase<Tile, Pitch, PriorAddr, ColumnAddr, 1, BatchGroup, FullStripe>();
-    NativePriorCandidatePhase<Tile, Pitch, PriorAddr, ColumnAddr, 2, BatchGroup, FullStripe>();
-    NativePriorCandidatePhase<Tile, Pitch, PriorAddr, ColumnAddr, 3, BatchGroup, FullStripe>();
-    NativePriorCandidatePhase<Tile, Pitch, PriorAddr, ColumnAddr, 4, BatchGroup, FullStripe>();
+    NativePriorCandidatePhase<Tile, Pitch, PriorAddr, ColumnAddr, 0, BatchGroup, FullStripe, SpreadFields>();
+    NativePriorCandidatePhase<Tile, Pitch, PriorAddr, ColumnAddr, 1, BatchGroup, FullStripe, SpreadFields>();
+    NativePriorCandidatePhase<Tile, Pitch, PriorAddr, ColumnAddr, 2, BatchGroup, FullStripe, SpreadFields>();
+    NativePriorCandidatePhase<Tile, Pitch, PriorAddr, ColumnAddr, 3, BatchGroup, FullStripe, SpreadFields>();
+    NativePriorCandidatePhase<Tile, Pitch, PriorAddr, ColumnAddr, 4, BatchGroup, FullStripe, SpreadFields>();
 }

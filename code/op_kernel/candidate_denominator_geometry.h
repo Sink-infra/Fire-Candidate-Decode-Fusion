@@ -34,14 +34,14 @@ __aicore__ inline void DecodeCandidateGeometry(LocalTensor<float> c, uint32_t co
     PipeBarrier<PIPE_V>();
 }
 
-template <uint32_t Tile, uint32_t Pitch, bool FastConfidence = false, bool ReplicatedStride = false, bool TransformedPriors = false>
+template <uint32_t Tile, uint32_t Pitch, bool FastConfidence = false, bool ReplicatedStride = false, bool TransformedPriors = false, bool SpreadFields = false>
 __aicore__ inline void DecodeCandidateDenominators(LocalTensor<float> columns,
     LocalTensor<float> two, LocalTensor<float> one, LocalTensor<float> firstStride)
 {
     static_assert(Tile >= 1024 && Tile % 64 == 0 && (Pitch == Tile + 8 || Pitch == Tile + 16));
     SetMaskCount();
     SetVectorMask<float, MaskMode::COUNTER>(Tile);
-    Mul<float, false>(columns[4 * Pitch], columns[4 * Pitch], columns[5 * Pitch],
+    Mul<float, false>(columns[4 * Pitch], columns[4 * Pitch], columns[(SpreadFields ? 12 : 5) * Pitch],
         MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
     SetVectorMask<float, MaskMode::COUNTER>(Pitch * 4);
     Div<float, false>(columns, two, columns, MASK_PLACEHOLDER, 1, {1, 0, 1, 8, 0, 8});
@@ -59,17 +59,17 @@ __aicore__ inline void DecodeCandidateDenominators(LocalTensor<float> columns,
             MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
         Mul<float, false>(columns[2 * Pitch], columns[2 * Pitch], columns[2 * Pitch],
             MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
-        Add<float, false>(columns, columns, columns[6 * Pitch],
+        Add<float, false>(columns, columns, columns[(SpreadFields ? 8 : 6) * Pitch],
             MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
-        Mul<float, false>(columns[2 * Pitch], columns[2 * Pitch], columns[9 * Pitch],
+        Mul<float, false>(columns[2 * Pitch], columns[2 * Pitch], columns[(SpreadFields ? 10 : 9) * Pitch],
             MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
     } else {
     Adds<float, false>(columns, columns, -0.5f, MASK_PLACEHOLDER, 1, {1, 1, 8, 8});
     Mul<float, false>(columns[2 * Pitch], columns[2 * Pitch], columns[2 * Pitch],
         MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
-    Add<float, false>(columns, columns, columns[6 * Pitch],
+    Add<float, false>(columns, columns, columns[(SpreadFields ? 8 : 6) * Pitch],
         MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
-    Mul<float, false>(columns[2 * Pitch], columns[2 * Pitch], columns[9 * Pitch],
+    Mul<float, false>(columns[2 * Pitch], columns[2 * Pitch], columns[(SpreadFields ? 10 : 9) * Pitch],
         MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
     if constexpr (ReplicatedStride) {
         SetVectorMask<float, MaskMode::COUNTER>(Pitch * 4);
@@ -80,7 +80,7 @@ __aicore__ inline void DecodeCandidateDenominators(LocalTensor<float> columns,
         Mul<float, false>(columns, columns, firstStride,
             MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
         for (uint32_t field = 1; field < 4; ++field)
-            Mul<float, false>(columns[field * Pitch], columns[field * Pitch], columns[8 * Pitch],
+            Mul<float, false>(columns[field * Pitch], columns[field * Pitch], columns[(SpreadFields ? 13 : 8) * Pitch],
                 MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 8, 8});
     }
     }
@@ -110,7 +110,7 @@ __aicore__ inline void ClearCandidatePriorTail(LocalTensor<float> prior, uint32_
     PipeBarrier<PIPE_V>();
 }
 
-template <uint32_t Tile, uint32_t Pitch, uint32_t Rows>
+template <uint32_t Tile, uint32_t Pitch, uint32_t Rows, bool SpreadFields = false>
 __aicore__ inline bool CanTransformCandidatePriors(LocalTensor<float> prior,
     LocalTensor<float> columns, LocalTensor<float> result,
     LocalTensor<float> temporary)
@@ -127,7 +127,7 @@ __aicore__ inline bool CanTransformCandidatePriors(LocalTensor<float> prior,
     Duplicate(flags, 0.0f, Repeats * 64);
     PipeBarrier<PIPE_V>();
     CompareScalar(priorMask, prior, 1.0e18f, CMPMODE::GT, Rows * 5);
-    CompareScalar(strideMask, columns[8 * Pitch], 32.0f, CMPMODE::GT, Tile);
+    CompareScalar(strideMask, columns[(SpreadFields ? 13 : 8) * Pitch], 32.0f, CMPMODE::GT, Tile);
     PipeBarrier<PIPE_V>();
     Or(priorMask.template ReinterpretCast<uint16_t>(),
         priorMask.template ReinterpretCast<uint16_t>(),
@@ -145,13 +145,13 @@ __aicore__ inline bool CanTransformCandidatePriors(LocalTensor<float> prior,
     return result.GetValue(0) == 0.0f;
 }
 
-template <uint32_t Pitch>
+template <uint32_t Pitch, bool SpreadFields = false>
 __aicore__ inline void TransformCandidatePriors(LocalTensor<float> columns,
     LocalTensor<float> stride)
 {
-    Adds(columns[6 * Pitch], columns[6 * Pitch], -0.5f, Pitch * 2);
-    Mul(columns[6 * Pitch], columns[6 * Pitch], stride, Pitch * 2);
-    Mul(columns[9 * Pitch], columns[9 * Pitch], stride, Pitch * 2);
+    Adds(columns[(SpreadFields ? 8 : 6) * Pitch], columns[(SpreadFields ? 8 : 6) * Pitch], -0.5f, Pitch * 2);
+    Mul(columns[(SpreadFields ? 8 : 6) * Pitch], columns[(SpreadFields ? 8 : 6) * Pitch], stride, Pitch * 2);
+    Mul(columns[(SpreadFields ? 10 : 9) * Pitch], columns[(SpreadFields ? 10 : 9) * Pitch], stride, Pitch * 2);
 }
 
 namespace HistoricalNative {
