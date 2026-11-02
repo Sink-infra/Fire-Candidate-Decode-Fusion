@@ -169,7 +169,7 @@ __aicore__ inline void PackNativeFiveCandidates()
     NativeFiveCandidatePhase<Tile, Pitch, ColumnAddr, PackedAddr, 4, FullStripe>();
 }
 
-template <uint32_t Tile, uint32_t Pitch, uint32_t ColumnAddr, uint32_t PackedAddr, bool Pack, bool HalfNative = false, uint32_t HalfAddr = 0>
+template <uint32_t Tile, uint32_t Pitch, uint32_t ColumnAddr, uint32_t PackedAddr, bool Pack, bool HalfNative = false, uint32_t HalfAddr = 0, uint32_t RawGapBytes = 0>
 __aicore__ inline uint64_t CandidateAddressWord(uint32_t phase, uint32_t word, bool source)
 {
     constexpr uint32_t Rows = Tile / 2;
@@ -198,7 +198,7 @@ __aicore__ inline uint64_t CandidateAddressWord(uint32_t phase, uint32_t word, b
             }
         } else {
             if (source) {
-                address = j * 192 + phase * 32 + (slot / 8) * Rows * 24;
+                address = j * 192 + phase * 32 + (slot / 8) * (Rows * 24 + RawGapBytes);
             } else {
                 const uint32_t field = (phase * 8 + j) % 6;
                 const uint32_t stripe = (phase * 8 + j) / 6;
@@ -210,7 +210,7 @@ __aicore__ inline uint64_t CandidateAddressWord(uint32_t phase, uint32_t word, b
     return result;
 }
 
-template <uint32_t Tile, uint32_t Pitch, uint32_t ColumnAddr, uint32_t PackedAddr, uint32_t CacheAddr, bool HalfNative = false, uint32_t HalfAddr = 0>
+template <uint32_t Tile, uint32_t Pitch, uint32_t ColumnAddr, uint32_t PackedAddr, uint32_t CacheAddr, bool HalfNative = false, uint32_t HalfAddr = 0, uint32_t RawGapBytes = 0>
 __aicore__ inline void BuildCandidateAddressCache()
 {
     constexpr uint32_t InputPhases = HalfNative ? 3 : 6;
@@ -220,18 +220,18 @@ __aicore__ inline void BuildCandidateAddressCache()
         #pragma unroll
         for (uint32_t word = 0; word < 4; ++word) {
             table.SetValue(phase * 8 + word,
-                CandidateAddressWord<Tile, Pitch, ColumnAddr, PackedAddr, false, HalfNative, HalfAddr>(phase, word, false));
+                CandidateAddressWord<Tile, Pitch, ColumnAddr, PackedAddr, false, HalfNative, HalfAddr, RawGapBytes>(phase, word, false));
             table.SetValue(phase * 8 + 4 + word,
-                CandidateAddressWord<Tile, Pitch, ColumnAddr, PackedAddr, false, HalfNative, HalfAddr>(phase, word, true));
+                CandidateAddressWord<Tile, Pitch, ColumnAddr, PackedAddr, false, HalfNative, HalfAddr, RawGapBytes>(phase, word, true));
         }
     #pragma unroll
     for (uint32_t phase = 0; phase < 5; ++phase)
         #pragma unroll
         for (uint32_t word = 0; word < 4; ++word) {
             table.SetValue((phase + InputPhases) * 8 + word,
-                CandidateAddressWord<Tile, Pitch, ColumnAddr, PackedAddr, true, HalfNative, HalfAddr>(phase, word, false));
+                CandidateAddressWord<Tile, Pitch, ColumnAddr, PackedAddr, true, HalfNative, HalfAddr, RawGapBytes>(phase, word, false));
             table.SetValue((phase + InputPhases) * 8 + 4 + word,
-                CandidateAddressWord<Tile, Pitch, ColumnAddr, PackedAddr, true, HalfNative, HalfAddr>(phase, word, true));
+                CandidateAddressWord<Tile, Pitch, ColumnAddr, PackedAddr, true, HalfNative, HalfAddr, RawGapBytes>(phase, word, true));
         }
     SetFlag<HardEvent::S_V>(0);
     WaitFlag<HardEvent::S_V>(0);
