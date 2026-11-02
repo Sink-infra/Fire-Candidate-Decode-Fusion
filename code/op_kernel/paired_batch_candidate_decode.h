@@ -1,6 +1,5 @@
 #pragma once
 #include "candidate_index_ramp.h"
-#include "candidate_native_six_input.h"
 #include "candidate_native_five_pack.h"
 #include "candidate_native_prior.h"
 #include "candidate_denominator_geometry.h"

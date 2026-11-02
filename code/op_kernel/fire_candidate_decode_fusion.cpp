@@ -4,8 +4,8 @@
 
 using namespace AscendC;
 #include "candidate_index_ramp.h"
-#include "candidate_geometry.h"
-#include "candidate_grouped_tail.h"
+#include "candidate_denominator_geometry.h"
+#include "candidate_transfer.h"
 
 #include "small_candidate_decode.h"
 #include "native_small_candidate_decode.h"
