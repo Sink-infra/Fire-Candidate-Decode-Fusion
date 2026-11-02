@@ -11,7 +11,9 @@ class PairedBatchCandidateDecode {
     static constexpr uint32_t HalfTile = Tile / BatchGroup;
     static constexpr uint32_t Pitch = Tile + (HalfNativeInput ? 16 : 8);
     static constexpr bool Reuse = sizeof(T) == 4;
-    static constexpr uint32_t RawBytes = Tile * 6 * sizeof(T);
+    static constexpr uint32_t RawGapBytes = Reuse && NativePrior && NativePack && Tile >= 1408 ? 32 : 0;
+    static_assert(RawGapBytes == 0 || BatchGroup == 2);
+    static constexpr uint32_t RawBytes = Tile * 6 * sizeof(T) + RawGapBytes;
     static constexpr uint32_t FloatAddr = RawBytes;
     static constexpr uint32_t SharedAddr = FloatAddr + (Reuse ? 0 : Tile * 24);
     static constexpr uint32_t SharedBytes = Tile * 5 * sizeof(T);
@@ -19,7 +21,7 @@ class PairedBatchCandidateDecode {
     static constexpr uint32_t OneAddr = ColumnAddr + Pitch * 44;
     static constexpr uint32_t StrideAddr = OneAddr + (sizeof(T) == 4 ? 928 : 576);
     static constexpr bool CachedAddresses = (Reuse || HalfNativeInput) && NativePrior && NativePack && Tile >= 1408;
-    static constexpr bool TransformPriors = Reuse && NativePrior && ReplicatedStride && Tile >= 1408;
+    static constexpr bool TransformPriors = false;
     static constexpr uint32_t AddressCache = StrideAddr + Pitch * 16;
     static_assert(!CachedAddresses || AddressCache + 704 <= 196608);
     static_assert(!ReplicatedStride || (NativePrior && NativePack && StrideAddr + Pitch * 16 <= 196608));
@@ -121,7 +123,7 @@ public:
         if constexpr (FuseConfidence) Duplicate(At<float>(OneAddr + 256, 64), 1.0f, 64);
         if constexpr (CachedAddresses)
             BuildCandidateAddressCache<Tile, Pitch, ColumnAddr, Reuse ? SharedAddr : FloatAddr,
-                AddressCache, HalfNativeInput, FloatAddr>();
+                AddressCache, HalfNativeInput, FloatAddr, RawGapBytes>();
         if constexpr (FastRamp && !RowScratch) {
             SetFlag<HardEvent::V_MTE2>(rawFree_);
             WaitFlag<HardEvent::V_MTE2>(rawFree_);
@@ -213,7 +215,7 @@ public:
             if constexpr (!Preload) LoadRaw(0, start, count);
             for (uint32_t b = 0; b < batch_; b += BatchGroup) {
                 WaitFlag<HardEvent::MTE2_V>(rawReady_);
-                auto raw = At<T>(0, Tile * 6, TPosition::VECIN);
+                auto raw = At<T>(0, Tile * 6 + RawGapBytes / sizeof(T), TPosition::VECIN);
                 Compute(raw, prior, b, start, count);
             }
         }
@@ -270,9 +272,9 @@ private:
     __aicore__ inline void LoadRaw(uint32_t b, uint32_t start, uint32_t count)
     {
         if (rawUsed_) WaitFlag<HardEvent::V_MTE2>(rawFree_);
-        auto raw = At<T>(0, Tile * 6, TPosition::VECIN);
+        auto raw = At<T>(0, Tile * 6 + RawGapBytes / sizeof(T), TPosition::VECIN);
         CopyCandidateInput<T, AlignedTransfers>(raw, raw_, (b * n_ + start) * 6,
-            uint16_t(BatchGroup), count * 6, HalfTile * 6, n_ * 6);
+            uint16_t(BatchGroup), count * 6, HalfTile * 6 + RawGapBytes / sizeof(T), n_ * 6);
         SetFlag<HardEvent::MTE2_V>(rawReady_);
         rawUsed_ = true;
     }
@@ -305,12 +307,26 @@ private:
                     DataCopy(sig, raw, ((count * 6 + 7) / 8) * 8);
             }
             if constexpr (!Reuse) ReleaseRawAndPrefetch(b, start, validCount);
+            if constexpr (RawGapBytes != 0) {
+                Duplicate(At<float>(HalfTile * 24, 8), 0.0f, 8);
+                SetMaskCount();
+                SetVectorMask<float, MaskMode::COUNTER>(count * 6 + RawGapBytes / 4);
+                Muls<float, false>(sig, sig, -1.0f, MASK_PLACEHOLDER, 1, {1, 1, 8, 8});
+                Exp<float, false>(sig, sig, MASK_PLACEHOLDER, 1, {1, 1, 8, 8});
+                Adds<float, false>(sig, sig, 1.0f, MASK_PLACEHOLDER, 1, {1, 1, 8, 8});
+                if constexpr (!FuseConfidence)
+                    Div<float, false>(sig, At<float>(OneAddr, 64), sig,
+                        MASK_PLACEHOLDER, 1, {1, 1, 1, 8, 0, 8});
+                SetMaskNorm();
+                ResetMask();
+            } else {
             Muls(sig, sig, -1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             Exp(sig, sig, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             Adds(sig, sig, 1.0f, uint64_t(64), uint8_t((count * 6 + 63) / 64), {1, 1, 8, 8});
             if constexpr (!FuseConfidence) {
                 Div(sig, At<float>(OneAddr, 64), sig, uint64_t(64),
                     uint8_t((count * 6 + 63) / 64), {1, 1, 1, 8, 0, 8});
+            }
             }
             }
             auto c = At<float>(ColumnAddr, Pitch * 11);
