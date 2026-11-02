@@ -1,4 +1,5 @@
 #pragma once
+#include "historical_paired_candidate_decode.h"
 
 template <typename T, bool Adaptive>
 __aicore__ inline void RunFourBatchMediumCandidate(GM_ADDR raw, GM_ADDR prior, GM_ADDR out,
@@ -32,10 +33,18 @@ __aicore__ inline void RunLargeCandidatePath(GM_ADDR raw, GM_ADDR prior, GM_ADDR
     const FireCandidateDecodeFusionTilingData &data)
 {
     InitSocState();
+    if constexpr (NativePrior && Tile >= 1408) {
+    HistoricalNative::PairedBatchCandidateDecode<T, Tile, false, true,
+        sizeof(T) == 4, false, true, true, 2, true, true, Preload, NativePrior, true, sizeof(T) == 2 && NativePrior, AlignedTransfers, true, NativePrior> op;
+    op.Init(raw, prior, out, data, nullptr);
+    op.Process();
+    } else {
     PairedBatchCandidateDecode<T, Tile, false, true,
         sizeof(T) == 4, false, true, true, 2, true, true, Preload, NativePrior, true, sizeof(T) == 2 && NativePrior, AlignedTransfers, true, NativePrior> op;
     op.Init(raw, prior, out, data, nullptr);
     op.Process();
+    }
+
 }
 
 template <typename T, uint32_t Tile>

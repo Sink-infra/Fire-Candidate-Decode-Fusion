@@ -213,6 +213,7 @@ private:
         else { sig = rawFloat_.Get<float>(); packed = packed_.Get<float>(); }
         const uint32_t rawStride = ((count * 6 * sizeof(T) + 31) / 32) * 32 / sizeof(T);
         const uint32_t dstStride = ((count * 5 * sizeof(T) + 31) / 32) * 32 / sizeof(T);
+        Duplicate(ones_.Get<float>(), 1.0f, 64);
         DecodeGroupedCandidateTail<T, Pitch, Tile>(raw, prior, sig,
             columns_.Get<float>(), ones_.Get<float>(), rawIndex_.Get<uint32_t>(),
             priorIndex_.Get<uint32_t>(), packIndex_.Get<uint32_t>(), packed, dst,
